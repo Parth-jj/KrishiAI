@@ -1,0 +1,6 @@
+{
+  "name": "KrishiAI - Your AI Farm Companion",
+  "description": "KrishiAI is an AI-powered agricultural advisory platform helping farmers with real-time crop health monitoring, voice-enabled AI consultations, weather forecasts, and live mandi market prices.",
+  "requestFramePermissions": ["microphone", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
