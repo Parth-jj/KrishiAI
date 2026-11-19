@@ -11,7 +11,8 @@ import {
   Check,
   Settings,
   ShieldCheck,
-  Compass
+  Compass,
+  PhoneCall
 } from "lucide-react";
 import { FarmerAvatarIcon } from "./FarmIllustrations.js";
 import { useAuth } from "../context/AuthContext.js";
@@ -21,12 +22,14 @@ interface TopHeaderProps {
   onToggleMobileMenu: () => void;
   onOpenFarmModal: () => void;
   onOpenAuthModal: () => void;
+  onOpenVoiceModal?: () => void;
 }
 
 export const TopHeader: React.FC<TopHeaderProps> = ({
   onToggleMobileMenu,
   onOpenFarmModal,
-  onOpenAuthModal
+  onOpenAuthModal,
+  onOpenVoiceModal
 }) => {
   const { user, farm, logout, demoLogin } = useAuth();
   const { language, setLanguage, t } = useLanguage();
@@ -82,7 +85,20 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         </div>
       </div>
 
-      {/* Right: Profile & Settings Pill */}
+      {/* Right: AI Voice Call + Profile & Settings Pill */}
+      <div className="flex items-center gap-2.5">
+        {onOpenVoiceModal && (
+          <button
+            type="button"
+            id="header-voice-call-btn"
+            onClick={onOpenVoiceModal}
+            className="bg-[#EBF3EA] hover:bg-[#DCEBD9] border border-[#9CCC65] text-[#1B3F23] px-3.5 py-2 rounded-full shadow-2xs flex items-center gap-2 text-xs font-black transition cursor-pointer"
+          >
+            <PhoneCall className="w-3.5 h-3.5 text-[#256030]" />
+            <span className="hidden md:inline">AI Voice Helpline</span>
+          </button>
+        )}
+
       <div className="relative" ref={dropdownRef}>
         <button
           id="user-profile-pill-btn"
@@ -196,6 +212,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             </motion.div>
           )}
         </AnimatePresence>
+      </div>
       </div>
     </header>
   );

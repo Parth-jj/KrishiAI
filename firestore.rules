@@ -144,6 +144,41 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidVoiceCall(data, userId) {
+      return data.keys().hasAll([
+          'userId', 'callId', 'farmerName', 'phoneMasked', 'status',
+          'selectedLanguage', 'callConsent', 'transcriptConsent',
+          'durationSeconds', 'summary', 'topicsDiscussed', 'transcriptLines',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'callId', 'farmerName', 'phoneMasked', 'status',
+          'selectedLanguage', 'callConsent', 'transcriptConsent',
+          'durationSeconds', 'summary', 'topicsDiscussed', 'transcriptLines',
+          'sarvamAttemptId', 'sarvamInteractionId', 'failureReason',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.callId is string && data.callId.size() >= 1 && data.callId.size() <= 128
+        && data.farmerName is string && data.farmerName.size() >= 1 && data.farmerName.size() <= 120
+        && data.phoneMasked is string && data.phoneMasked.size() >= 4 && data.phoneMasked.size() <= 40
+        && data.status in ['Initiating', 'Ringing', 'Connected', 'Conversation Active', 'Completed', 'Failed']
+        && data.selectedLanguage in ['te-IN', 'hi-IN', 'en-IN', 'ta-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'gu-IN', 'bn-IN', 'pa-IN', 'od-IN', 'as-IN']
+        && data.callConsent is bool && data.callConsent == true
+        && data.transcriptConsent is bool
+        && data.durationSeconds is number && data.durationSeconds >= 0 && data.durationSeconds <= 86400
+        && data.summary is string && data.summary.size() <= 1000
+        && isValidStringList(data.topicsDiscussed, 10)
+        && isValidStringList(data.transcriptLines, 100)
+        && (data.transcriptConsent == true || data.transcriptLines.size() == 0)
+        && (!('sarvamAttemptId' in data) || (data.sarvamAttemptId is string && data.sarvamAttemptId.size() <= 128))
+        && (!('sarvamInteractionId' in data) || (data.sarvamInteractionId is string && data.sarvamInteractionId.size() <= 128))
+        && (!('failureReason' in data) || (data.failureReason is string && data.failureReason.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // Admins Registry (Bootstrapped admin or existing admin)
     match /admins/{adminId} {
       allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
@@ -282,6 +317,38 @@ service cloud.firestore {
             )
           );
         allow delete: if isValidId(userId) && isValidId(taskId) && (isOwner(userId) || isAdmin());
+      }
+
+      // User AI Voice Call Summaries & Consented Transcripts (Master Gate: parent /users/{userId} must exist)
+      match /voiceCalls/{callId} {
+        allow get: if isValidId(userId) && isValidId(callId) && (isOwner(userId) || isAdmin());
+        allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+        allow create: if isValidId(userId) && isValidId(callId)
+          && isVerifiedUser()
+          && isOwner(userId)
+          && hasParentUser(userId)
+          && isValidVoiceCall(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(callId)
+          && isVerifiedUser()
+          && isValidVoiceCall(incoming(), userId)
+          && incoming().userId == existing().userId
+          && incoming().callId == existing().callId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            isAdmin() ||
+            (
+              isOwner(userId)
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'status', 'selectedLanguage', 'durationSeconds', 'summary',
+                'topicsDiscussed', 'transcriptLines', 'sarvamAttemptId',
+                'sarvamInteractionId', 'failureReason', 'updatedAt'
+              ])
+            )
+          );
+        allow delete: if isValidId(userId) && isValidId(callId) && (isOwner(userId) || isAdmin());
       }
     }
   }

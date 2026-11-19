@@ -1,11 +1,11 @@
 # Security Specification & Payload-First TDD (`firestore.rules`)
 
 ## 1. Data Invariants
-1. **Master Gate & Ownership:** Every `/users/{userId}/farms/{farmId}`, `/users/{userId}/queries/{queryId}`, `/users/{userId}/tasks/{taskId}`, and `/users/{userId}/private/info` document requires an existing parent `/users/{userId}` document and `userId == request.auth.uid`.
-2. **PII Isolation:** Contact PII (`email`, `phone`) is stored strictly in `/users/{userId}/private/info` and readable/writable only by `isOwner(userId)` or `isAdmin()`.
+1. **Master Gate & Ownership:** Every `/users/{userId}/farms/{farmId}`, `/users/{userId}/queries/{queryId}`, `/users/{userId}/tasks/{taskId}`, `/users/{userId}/voiceCalls/{callId}`, and `/users/{userId}/private/info` document requires an existing parent `/users/{userId}` document and `userId == request.auth.uid`.
+2. **PII & Transcript Consent Isolation:** Contact PII (`email`, `phone`) is stored strictly in `/users/{userId}/private/info` and readable/writable only by `isOwner(userId)` or `isAdmin()`. In `/users/{userId}/voiceCalls/{callId}`, `transcriptLines` MUST be empty (`size() == 0`) whenever `transcriptConsent == false`.
 3. **Anti-Self-Escalation:** Client writes to `/users/{userId}` on creation must lock `role == 'farmer'`, and users cannot update their `role`.
 4. **Immutable Ownership & Temporal Integrity:** `uid` / `userId` and `createdAt` cannot change after creation; `createdAt` and `updatedAt` must equal `request.time`.
-5. **Bounded Arrays & Strings:** All strings enforce `.size()` bounds; all lists in `QueryAdvisory` (`likelyCauses`, `recommendationTitles`, `recommendationDetails`, `precautions`, `sourceTitles`) enforce `.size() <= 10` and element type check on index `0`.
+5. **Bounded Arrays & Strings:** All strings enforce `.size()` bounds; all lists in `QueryAdvisory` (`likelyCauses`, `recommendationTitles`, `recommendationDetails`, `precautions`, `sourceTitles`) enforce `.size() <= 10` and element type check on index `0`, and `VoiceCall.transcriptLines` enforces `.size() <= 100`.
 6. **Verified Identity:** Standard writes require `request.auth != null && request.auth.token.email_verified == true`.
 
 ## 2. The "Dirty Dozen" Attack Payloads (All Must Fail with PERMISSION_DENIED)

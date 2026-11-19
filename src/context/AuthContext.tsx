@@ -4,6 +4,7 @@ import { firebaseAuth, googleProvider } from "../firebase.js";
 import {
   ensureFirebaseUserDocuments,
   saveFarmToFirestore,
+  saveUserPhoneToFirestore,
 } from "../services/firestoreService.js";
 import { User, Farm } from "../types/index.js";
 
@@ -19,6 +20,7 @@ interface AuthContextType {
   demoLogin: (role: 'farmer' | 'admin') => Promise<void>;
   register: (data: { name: string; email: string; password: string; phone?: string; role?: string; farm?: Partial<Farm> }) => Promise<void>;
   updateFarm: (farmData: Partial<Farm>) => Promise<void>;
+  updatePhone: (phone: string) => Promise<void>;
   logout: () => void;
   refreshUserData: () => Promise<void>;
 }
@@ -33,12 +35,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const firebaseInitializedRef = useRef<boolean>(false);
 
-  async function syncFirebaseSessionWithBackend(idToken: string) {
+  async function syncFirebaseSessionWithBackend(idToken: string, phone?: string) {
     try {
       const res = await fetch("/api/auth/firebase-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken }),
+        body: JSON.stringify({ idToken, phone }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -64,7 +66,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(fsUser);
           setFarm(fsFarm);
           setIsFirebaseAuth(true);
-          await syncFirebaseSessionWithBackend(idToken);
+          await syncFirebaseSessionWithBackend(idToken, fsUser.phone);
         } catch (err) {
           console.error("Failed to initialize Firebase user documents:", err);
         } finally {
@@ -120,7 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(fsUser);
     setFarm(fsFarm);
     setIsFirebaseAuth(true);
-    await syncFirebaseSessionWithBackend(idToken);
+    await syncFirebaseSessionWithBackend(idToken, fsUser.phone);
   };
 
   const login = async (email: string, password: string) => {
@@ -214,6 +216,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setFarm(data.farm);
   };
 
+  const updatePhone = async (phone: string) => {
+    const cleaned = phone.trim();
+    if (isFirebaseAuth && firebaseAuth.currentUser) {
+      await saveUserPhoneToFirestore(firebaseAuth.currentUser.uid, cleaned);
+    }
+    if (token) {
+      const res = await fetch("/api/auth/me", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ phone: cleaned })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update mobile number");
+      }
+    }
+    setUser((prev) => (prev ? { ...prev, phone: cleaned } : prev));
+  };
+
   const refreshUserData = async () => {
     if (isFirebaseAuth && firebaseAuth.currentUser) {
       const prefLang = localStorage.getItem("agri_pref_lang") || "en";
@@ -266,6 +290,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         demoLogin,
         register,
         updateFarm,
+        updatePhone,
         logout,
         refreshUserData
       }}

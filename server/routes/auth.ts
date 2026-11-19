@@ -179,9 +179,9 @@ authRouter.put("/me", authenticateUser, (req: Request, res: Response) => {
   const { name, phone, preferredLanguage } = req.body;
 
   const updated = db.updateUser(user.id, {
-    ...(name && { name }),
-    ...(phone !== undefined && { phone }),
-    ...(preferredLanguage && { preferredLanguage })
+    ...(typeof name === "string" && name.trim() ? { name: name.trim() } : {}),
+    ...(phone !== undefined && typeof phone === "string" ? { phone: phone.trim() } : {}),
+    ...(typeof preferredLanguage === "string" && preferredLanguage.trim() ? { preferredLanguage: preferredLanguage.trim() } : {})
   });
 
   if (!updated) {
@@ -195,7 +195,7 @@ authRouter.put("/me", authenticateUser, (req: Request, res: Response) => {
 // Exchange a verified Firebase ID Token for a backend API session JWT
 authRouter.post("/firebase-session", async (req: Request, res: Response) => {
   try {
-    const { idToken } = req.body;
+    const { idToken, phone } = req.body;
     if (!idToken || typeof idToken !== "string") {
       return res.status(400).json({ error: "Firebase idToken is required" });
     }
@@ -219,12 +219,17 @@ authRouter.post("/firebase-session", async (req: Request, res: Response) => {
     }
 
     const verifyData = (await verifyRes.json()) as {
-      users?: Array<{ localId: string; email?: string; displayName?: string }>;
+      users?: Array<{ localId: string; email?: string; displayName?: string; phoneNumber?: string }>;
     };
     const fbUser = verifyData.users?.[0];
     if (!fbUser || !fbUser.email) {
       return res.status(401).json({ error: "Firebase user not found" });
     }
+
+    const resolvedPhone =
+      typeof phone === "string" && phone.trim()
+        ? phone.trim()
+        : fbUser.phoneNumber || "";
 
     const normalizedEmail = fbUser.email.trim().toLowerCase();
     let user = db.getUserByEmail(normalizedEmail);
@@ -232,11 +237,13 @@ authRouter.post("/firebase-session", async (req: Request, res: Response) => {
       user = db.createUser({
         name: fbUser.displayName || normalizedEmail.split("@")[0] || "Farmer",
         email: normalizedEmail,
-        phone: "",
+        phone: resolvedPhone,
         passwordHash: hashPassword(`fb_${fbUser.localId}_${Date.now()}`),
         role: "farmer",
         preferredLanguage: "en",
       });
+    } else if (resolvedPhone && user.phone !== resolvedPhone) {
+      user = db.updateUser(user.id, { phone: resolvedPhone }) || user;
     }
 
     const token = generateToken(user);

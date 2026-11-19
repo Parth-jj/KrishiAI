@@ -90,6 +90,73 @@ export interface EvaluationRunResult {
   }>;
 }
 
+export type VoiceCallStatus =
+  | "Initiating"
+  | "Ringing"
+  | "Connected"
+  | "Conversation Active"
+  | "Completed"
+  | "Failed";
+
+export interface VoiceCallTranscriptTurn {
+  role: "farmer" | "assistant" | "system";
+  text: string;
+  language?: string;
+  timestamp: string;
+}
+
+export interface VoiceCallRecord {
+  callId: string;
+  sessionId: string;
+  userId: string;
+  farmerName: string;
+  phoneMasked: string;
+  phoneNormalized: string;
+  status: VoiceCallStatus;
+  selectedLanguage: string;
+  callConsent: boolean;
+  transcriptConsent: boolean;
+  sarvamAttemptId?: string;
+  sarvamInteractionId?: string;
+  vobizCallUuid?: string;
+  startedAt: string;
+  connectedAt?: string;
+  endedAt?: string;
+  updatedAt: string;
+  durationSeconds?: number;
+  summary?: string;
+  topicsDiscussed: string[];
+  failureReason?: string;
+  transcript?: VoiceCallTranscriptTurn[];
+}
+
+export function normalizePhoneNumber(rawPhone: string): string {
+  const trimmed = (rawPhone || "").trim();
+  if (!trimmed) return "";
+  const digitsOnly = trimmed.replace(/\D/g, "");
+  if (digitsOnly.length === 10 && /^[6-9]\d{9}$/.test(digitsOnly)) {
+    return `+91${digitsOnly}`;
+  }
+  if (digitsOnly.length === 11 && digitsOnly.startsWith("0") && /^0[6-9]\d{9}$/.test(digitsOnly)) {
+    return `+91${digitsOnly.slice(1)}`;
+  }
+  if (digitsOnly.length === 12 && digitsOnly.startsWith("91") && /^91[6-9]\d{9}$/.test(digitsOnly)) {
+    return `+${digitsOnly}`;
+  }
+  if (trimmed.startsWith("+") && digitsOnly.length >= 8 && digitsOnly.length <= 15) {
+    return `+${digitsOnly}`;
+  }
+  return "";
+}
+
+export function maskPhoneNumber(normalizedPhone: string): string {
+  if (!normalizedPhone) return "";
+  if (normalizedPhone.length <= 4) return normalizedPhone;
+  const tail = normalizedPhone.slice(-4);
+  const head = normalizedPhone.slice(0, 3);
+  return `${head}••••••${tail}`;
+}
+
 // Password hashing using Node.js crypto
 export function hashPassword(password: string): string {
   return crypto.pbkdf2Sync(password, "agri_salt_2026", 1000, 32, "sha256").toString("hex");
@@ -379,6 +446,7 @@ interface PersistedDatabaseState {
   queries: QueryRecord[];
   documents: KnowledgeDocument[];
   evaluationRuns: EvaluationRunResult[];
+  voiceCalls: VoiceCallRecord[];
 }
 
 const DB_DIR = path.join(process.cwd(), ".data");
@@ -390,6 +458,7 @@ class InMemoryDatabase {
   private queries: Map<string, QueryRecord> = new Map();
   private documents: Map<string, KnowledgeDocument> = new Map();
   private evaluationRuns: EvaluationRunResult[] = [];
+  private voiceCalls: Map<string, VoiceCallRecord> = new Map();
 
   constructor() {
     this.loadFromDisk();
@@ -427,6 +496,11 @@ class InMemoryDatabase {
       if (Array.isArray(parsed.evaluationRuns)) {
         this.evaluationRuns = parsed.evaluationRuns;
       }
+      if (Array.isArray(parsed.voiceCalls)) {
+        for (const vc of parsed.voiceCalls) {
+          if (vc && vc.callId) this.voiceCalls.set(vc.callId, vc);
+        }
+      }
     } catch (err) {
       console.warn("[DB] Failed to load persisted state, starting with seeded defaults:", err);
     }
@@ -442,7 +516,8 @@ class InMemoryDatabase {
         farms: Array.from(this.farms.values()),
         queries: Array.from(this.queries.values()),
         documents: Array.from(this.documents.values()),
-        evaluationRuns: this.evaluationRuns
+        evaluationRuns: this.evaluationRuns,
+        voiceCalls: Array.from(this.voiceCalls.values())
       };
       const tmpFile = `${DB_FILE}.tmp`;
       fs.writeFileSync(tmpFile, JSON.stringify(snapshot), "utf-8");
@@ -609,6 +684,15 @@ class InMemoryDatabase {
     return Array.from(this.users.values()).find(u => u.email.trim().toLowerCase() === normalized);
   }
 
+  getUserByPhone(rawPhone: string): UserRecord | undefined {
+    const target = normalizePhoneNumber(rawPhone);
+    if (!target) return undefined;
+    return Array.from(this.users.values()).find(u => {
+      if (!u.phone) return false;
+      return normalizePhoneNumber(u.phone) === target;
+    });
+  }
+
   getUserById(id: string): UserRecord | undefined {
     return this.users.get(id);
   }
@@ -743,6 +827,62 @@ class InMemoryDatabase {
 
   getEvaluationRuns(): EvaluationRunResult[] {
     return this.evaluationRuns;
+  }
+
+  // Voice Call Operations (Multi-session isolated storage)
+  createVoiceCall(call: VoiceCallRecord): VoiceCallRecord {
+    const sanitized: VoiceCallRecord = {
+      ...call,
+      transcript: call.transcriptConsent ? (call.transcript || []) : undefined,
+    };
+    this.voiceCalls.set(sanitized.callId, sanitized);
+    this.saveToDisk();
+    return sanitized;
+  }
+
+  getVoiceCallById(callId: string): VoiceCallRecord | undefined {
+    return this.voiceCalls.get(callId);
+  }
+
+  getVoiceCallByAttemptId(attemptId: string): VoiceCallRecord | undefined {
+    if (!attemptId) return undefined;
+    return Array.from(this.voiceCalls.values()).find(c => c.sarvamAttemptId === attemptId);
+  }
+
+  updateVoiceCall(callId: string, updates: Partial<VoiceCallRecord>): VoiceCallRecord | undefined {
+    const existing = this.voiceCalls.get(callId);
+    if (!existing) return undefined;
+    const nextConsent = updates.transcriptConsent !== undefined ? updates.transcriptConsent : existing.transcriptConsent;
+    const updated: VoiceCallRecord = {
+      ...existing,
+      ...updates,
+      transcript: nextConsent ? (updates.transcript ?? existing.transcript ?? []) : undefined,
+      updatedAt: new Date().toISOString()
+    };
+    this.voiceCalls.set(callId, updated);
+    this.saveToDisk();
+    return updated;
+  }
+
+  getVoiceCallsByUserId(userId: string): VoiceCallRecord[] {
+    return Array.from(this.voiceCalls.values())
+      .filter(c => c.userId === userId)
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  }
+
+  getActiveVoiceCalls(): VoiceCallRecord[] {
+    const activeStatuses = new Set<VoiceCallStatus>([
+      "Initiating",
+      "Ringing",
+      "Connected",
+      "Conversation Active"
+    ]);
+    return Array.from(this.voiceCalls.values()).filter(c => activeStatuses.has(c.status));
+  }
+
+  getActiveVoiceCallByPhone(normalizedPhone: string): VoiceCallRecord | undefined {
+    if (!normalizedPhone) return undefined;
+    return this.getActiveVoiceCalls().find(c => c.phoneNormalized === normalizedPhone);
   }
 }
 

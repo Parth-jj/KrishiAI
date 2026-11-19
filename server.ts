@@ -10,6 +10,7 @@ import { queriesRouter } from "./server/routes/queries.js";
 import { adminRouter } from "./server/routes/admin.js";
 import { weatherRouter } from "./server/routes/weather.js";
 import { evaluationRouter } from "./server/routes/evaluation.js";
+import { voiceCallsRouter } from "./server/routes/voiceCalls.js";
 import { initializeKnowledgeBase } from "./server/ragEngine.js";
 
 // Load environment variables
@@ -31,8 +32,15 @@ async function startServer() {
   // Initialize RAG knowledge base
   initializeKnowledgeBase();
 
-  // Middleware for parsing JSON and urlencoded data
-  app.use(express.json({ limit: "15mb" }));
+  // Middleware for parsing JSON (capturing rawBody for HMAC webhook verification) and urlencoded data
+  app.use(
+    express.json({
+      limit: "15mb",
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf.toString("utf8");
+      }
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
   // Health check endpoint
@@ -52,6 +60,7 @@ async function startServer() {
   app.use("/api/admin", adminRouter);
   app.use("/api/weather", weatherRouter);
   app.use("/api/evaluation", evaluationRouter);
+  app.use("/api/voice-calls", voiceCallsRouter);
 
   // Serve generated report & presentation files with explicit MIME types
   const downloadableAssets: Record<string, { mime: string; disposition: string }> = {

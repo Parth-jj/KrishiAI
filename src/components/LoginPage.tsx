@@ -17,11 +17,13 @@ import {
   CheckCircle2, 
   AlertCircle,
   Compass,
-  BookOpen
+  BookOpen,
+  PhoneCall
 } from "lucide-react";
 import { KisanSathiLogoIcon, SidebarFarmLandscape } from "./FarmIllustrations.js";
 import { useAuth } from "../context/AuthContext.js";
 import { useLanguage, LanguageCode } from "../context/LanguageContext.js";
+import { VoiceCallModal } from "./VoiceCallModal.js";
 
 export const LoginPage: React.FC = () => {
   const { login, loginWithGoogle, register, demoLogin, isLoading } = useAuth();
@@ -42,6 +44,7 @@ export const LoginPage: React.FC = () => {
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
 
   const languages: Array<{ code: LanguageCode; label: string; native: string }> = [
     { code: "en", label: "English", native: "English" },
@@ -470,6 +473,30 @@ export const LoginPage: React.FC = () => {
                 </span>
               </button>
 
+              {/* Prominent AI Voice Call Helpline Option */}
+              <div className="pt-2">
+                <motion.button
+                  type="button"
+                  id="ai-voice-call-login-btn"
+                  onClick={() => setIsVoiceModalOpen(true)}
+                  whileHover={{ scale: 1.015, y: -1 }}
+                  whileTap={{ scale: 0.985 }}
+                  className="w-full py-3.5 px-4 bg-[#EBF3EA] hover:bg-[#DDEBD9] text-[#1B3F23] border-2 border-[#9CCC65] rounded-2xl font-black text-sm transition-all shadow-sm flex items-center justify-center gap-2.5 cursor-pointer"
+                >
+                  <div className="w-7 h-7 rounded-xl bg-[#256030] text-[#FFD700] flex items-center justify-center shrink-0">
+                    <PhoneCall className="w-4 h-4" />
+                  </div>
+                  <div className="text-left">
+                    <div className="leading-tight">
+                      Login / Get Help Through AI Voice Call
+                    </div>
+                    <div className="text-[10px] font-bold text-[#2E7D32] leading-tight mt-0.5">
+                      Talk in 12 Indian Languages • Instant Phone Advisory
+                    </div>
+                  </div>
+                </motion.button>
+              </div>
+
               {/* Instant 1-Click Demo Login Section */}
               <div className="pt-4 border-t border-[#EAE5DC] space-y-3">
                 <div className="flex items-center justify-between">
@@ -542,6 +569,15 @@ export const LoginPage: React.FC = () => {
           <span>Mandi e-NAM Grounding</span>
         </div>
       </footer>
+
+      <VoiceCallModal
+        isOpen={isVoiceModalOpen}
+        onClose={() => setIsVoiceModalOpen(false)}
+        onSwitchToRegister={() => {
+          setMode("register");
+          setErrorMessage(null);
+        }}
+      />
 
     </div>
   );

@@ -230,3 +230,76 @@ export interface EvaluationRunResult {
     latencyMs: number;
   }>;
 }
+
+export type VoiceCallStatus =
+  | "Initiating"
+  | "Ringing"
+  | "Connected"
+  | "Conversation Active"
+  | "Completed"
+  | "Failed";
+
+export interface VoiceCallLanguageSpec {
+  code: string;
+  shortCode: string;
+  name: string;
+  nativeName: string;
+  sttModel: string;
+  ttsModel: string;
+  ttsSupportedNatively: boolean;
+  ttsEffectiveLanguageCode: string;
+  recommendedSpeaker: string;
+  notes?: string;
+}
+
+export interface VoiceCallTranscriptTurn {
+  role: "farmer" | "assistant" | "system";
+  text: string;
+  language?: string;
+  timestamp: string;
+}
+
+export interface VoiceCallRecord {
+  callId: string;
+  sessionId: string;
+  userId: string;
+  farmerName: string;
+  phoneMasked: string;
+  status: VoiceCallStatus;
+  selectedLanguage: string;
+  selectedLanguageName?: string;
+  selectedLanguageNative?: string;
+  ttsSupportedNatively?: boolean;
+  languageNote?: string;
+  callConsent: boolean;
+  transcriptConsent: boolean;
+  sarvamAttemptId?: string;
+  sarvamInteractionId?: string;
+  startedAt: string;
+  connectedAt?: string;
+  endedAt?: string;
+  updatedAt: string;
+  durationSeconds?: number;
+  summary?: string;
+  topicsDiscussed: string[];
+  failureReason?: string;
+  transcript?: VoiceCallTranscriptTurn[];
+}
+
+export interface VoiceCallConfigStatus {
+  configured: boolean;
+  missingVariables: string[];
+  models: {
+    stt: string;
+    tts: string;
+    llm: string;
+  };
+  webhookSecretConfigured: boolean;
+  toolSecretConfigured: boolean;
+  vobizHangupConfigured: boolean;
+  agentPhoneConfigured: boolean;
+  activeConcurrentCalls: number;
+  maxConcurrentCalls: number;
+  languages: VoiceCallLanguageSpec[];
+}
+

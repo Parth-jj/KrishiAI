@@ -16,6 +16,7 @@ import { MarketPricesView } from "./components/MarketPricesView.js";
 import { FarmProfileModal } from "./components/FarmProfileModal.js";
 import { AuthModal } from "./components/AuthModal.js";
 import { LoginPage } from "./components/LoginPage.js";
+import { VoiceCallModal } from "./components/VoiceCallModal.js";
 import { KisanSathiLogoIcon } from "./components/FarmIllustrations.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 
@@ -26,6 +27,7 @@ export function AppContent() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [isFarmModalOpen, setIsFarmModalOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
 
   // States to pass queries from Home to Ask AI seamlessly
   const [prefilledQuery, setPrefilledQuery] = useState<string>("");
@@ -83,6 +85,7 @@ export function AppContent() {
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
           onOpenFarmModal={() => setIsFarmModalOpen(true)}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
         />
 
         {/* Dynamic Page Views */}
@@ -132,6 +135,11 @@ export function AppContent() {
         <AuthModal
           isOpen={isAuthModalOpen}
           onClose={() => setIsAuthModalOpen(false)}
+        />
+
+        <VoiceCallModal
+          isOpen={isVoiceModalOpen}
+          onClose={() => setIsVoiceModalOpen(false)}
         />
 
       </div>

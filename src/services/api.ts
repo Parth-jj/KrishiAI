@@ -1,4 +1,13 @@
-import { QueryRecord, WeatherData, AdminStats, KnowledgeDocument, EvaluationItem, EvaluationRunResult } from "../types/index.js";
+import {
+  QueryRecord,
+  WeatherData,
+  AdminStats,
+  KnowledgeDocument,
+  EvaluationItem,
+  EvaluationRunResult,
+  VoiceCallConfigStatus,
+  VoiceCallRecord
+} from "../types/index.js";
 
 function getHeaders(token?: string | null): HeadersInit {
   const headers: HeadersInit = {
@@ -163,5 +172,84 @@ export const api = {
     const result = await res.json();
     if (!res.ok) throw new Error(result.error || "Failed to run evaluation");
     return result.result;
+  },
+
+  // Sarvam AI Voice Call operations
+  async getVoiceCallConfig(): Promise<VoiceCallConfigStatus> {
+    const res = await fetch("/api/voice-calls/config");
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || "Failed to load voice call configuration");
+    return result;
+  },
+
+  async initiateVoiceCall(payload: {
+    mobileNumber: string;
+    preferredLanguage: string;
+    callConsent: boolean;
+    transcriptConsent: boolean;
+  }): Promise<{ callToken: string; call: VoiceCallRecord }> {
+    const res = await fetch("/api/voice-calls/outbound", {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      const err: any = new Error(result.error || "Failed to initiate AI voice call");
+      err.code = result.code;
+      err.missingVariables = result.missingVariables;
+      err.retryAfterSeconds = result.retryAfterSeconds;
+      err.call = result.call;
+      err.callToken = result.callToken;
+      throw err;
+    }
+    return { callToken: result.callToken, call: result.call };
+  },
+
+  async getVoiceCallStatus(callId: string, callToken?: string | null): Promise<VoiceCallRecord> {
+    const headers: Record<string, string> = { ...(getHeaders() as Record<string, string>) };
+    if (callToken) headers["X-Call-Token"] = callToken;
+    const res = await fetch(`/api/voice-calls/${encodeURIComponent(callId)}/status`, { headers });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || "Failed to fetch voice call status");
+    return result.call;
+  },
+
+  async switchVoiceCallLanguage(
+    callId: string,
+    language: string,
+    callToken?: string | null
+  ): Promise<VoiceCallRecord> {
+    const headers: Record<string, string> = { ...(getHeaders() as Record<string, string>) };
+    if (callToken) headers["X-Call-Token"] = callToken;
+    const res = await fetch(`/api/voice-calls/${encodeURIComponent(callId)}/language`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ language })
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || "Failed to switch call language");
+    return result.call;
+  },
+
+  async endVoiceCall(callId: string, callToken?: string | null): Promise<{ call: VoiceCallRecord; providerNote?: string }> {
+    const headers: Record<string, string> = { ...(getHeaders() as Record<string, string>) };
+    if (callToken) headers["X-Call-Token"] = callToken;
+    const res = await fetch(`/api/voice-calls/${encodeURIComponent(callId)}/end`, {
+      method: "POST",
+      headers
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || "Failed to end voice call");
+    return { call: result.call, providerNote: result.providerNote };
+  },
+
+  async getVoiceCallHistory(): Promise<VoiceCallRecord[]> {
+    const res = await fetch("/api/voice-calls/history", {
+      headers: getHeaders()
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || "Failed to load call history");
+    return result.calls || [];
   }
 };

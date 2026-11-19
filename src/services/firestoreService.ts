@@ -13,7 +13,7 @@ import {
   where,
 } from "firebase/firestore";
 import { firestoreDb, handleFirestoreError, OperationType } from "../firebase.js";
-import { Farm, QueryRecord, User } from "../types/index.js";
+import { Farm, QueryRecord, User, VoiceCallRecord } from "../types/index.js";
 
 export interface FirestoreFarmTask {
   id: string;
@@ -439,3 +439,122 @@ export async function deleteTaskFromFirestore(uid: string, taskId: string): Prom
     handleFirestoreError(error, OperationType.DELETE, taskPath);
   }
 }
+
+export async function saveUserPhoneToFirestore(uid: string, phone: string): Promise<void> {
+  const privatePath = `users/${uid}/private/info`;
+  try {
+    await updateDoc(doc(firestoreDb, "users", uid, "private", "info"), {
+      phone: clampString(phone, 40),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, privatePath);
+  }
+}
+
+const VALID_SARVAM_LANGUAGES = new Set([
+  "te-IN", "hi-IN", "en-IN", "ta-IN", "kn-IN", "ml-IN",
+  "mr-IN", "gu-IN", "bn-IN", "pa-IN", "od-IN", "as-IN"
+]);
+
+export async function saveVoiceCallToFirestore(uid: string, call: VoiceCallRecord): Promise<void> {
+  const safeId = call.callId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 120);
+  const callPath = `users/${uid}/voiceCalls/${safeId}`;
+  const callRef = doc(firestoreDb, "users", uid, "voiceCalls", safeId);
+
+  try {
+    const snap = await getDoc(callRef);
+    const transcriptLines = call.transcriptConsent && Array.isArray(call.transcript)
+      ? clampStringList(
+          call.transcript.map((t) => `${t.role === "farmer" ? "Farmer" : "KrishiAI"}: ${t.text}`),
+          100,
+          1000
+        )
+      : [];
+
+    const selectedLanguage = VALID_SARVAM_LANGUAGES.has(call.selectedLanguage)
+      ? call.selectedLanguage
+      : "en-IN";
+
+    const updatePayload: Record<string, any> = {
+      status: call.status,
+      selectedLanguage,
+      durationSeconds: Math.min(86400, Math.max(0, Number(call.durationSeconds ?? 0) || 0)),
+      summary: clampString(call.summary, 1000, "AI voice consultation"),
+      topicsDiscussed: clampStringList(call.topicsDiscussed || [], 10, 1000),
+      transcriptLines,
+      updatedAt: serverTimestamp(),
+    };
+    if (call.sarvamAttemptId) {
+      updatePayload.sarvamAttemptId = clampString(call.sarvamAttemptId, 128);
+    }
+    if (call.sarvamInteractionId) {
+      updatePayload.sarvamInteractionId = clampString(call.sarvamInteractionId, 128);
+    }
+    if (call.failureReason) {
+      updatePayload.failureReason = clampString(call.failureReason, 500);
+    }
+
+    if (snap.exists()) {
+      await updateDoc(callRef, updatePayload);
+    } else {
+      await setDoc(callRef, {
+        userId: uid,
+        callId: clampString(call.callId, 128, safeId),
+        farmerName: clampString(call.farmerName, 120, "Farmer"),
+        phoneMasked: clampString(call.phoneMasked, 40, "+91••••••"),
+        callConsent: true,
+        transcriptConsent: Boolean(call.transcriptConsent),
+        ...updatePayload,
+        createdAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, callPath);
+  }
+}
+
+export async function loadVoiceCallsFromFirestore(uid: string): Promise<VoiceCallRecord[]> {
+  const callsPath = `users/${uid}/voiceCalls`;
+  try {
+    const q = query(collection(firestoreDb, "users", uid, "voiceCalls"), where("userId", "==", uid));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => {
+      const data = d.data();
+      const transcriptConsent = Boolean(data.transcriptConsent);
+      const rawLines: string[] = transcriptConsent && Array.isArray(data.transcriptLines) ? data.transcriptLines : [];
+      return {
+        callId: data.callId || d.id,
+        sessionId: data.callId || d.id,
+        userId: data.userId,
+        farmerName: data.farmerName || "Farmer",
+        phoneMasked: data.phoneMasked || "",
+        status: data.status || "Completed",
+        selectedLanguage: data.selectedLanguage || "en-IN",
+        callConsent: Boolean(data.callConsent),
+        transcriptConsent,
+        sarvamAttemptId: data.sarvamAttemptId,
+        sarvamInteractionId: data.sarvamInteractionId,
+        startedAt: toIsoString(data.createdAt),
+        updatedAt: toIsoString(data.updatedAt),
+        durationSeconds: Number(data.durationSeconds ?? 0),
+        summary: data.summary || "",
+        topicsDiscussed: Array.isArray(data.topicsDiscussed) ? data.topicsDiscussed : [],
+        failureReason: data.failureReason,
+        transcript: transcriptConsent
+          ? rawLines.map((line) => {
+              const isFarmer = line.startsWith("Farmer:");
+              return {
+                role: isFarmer ? ("farmer" as const) : ("assistant" as const),
+                text: line.replace(/^(Farmer|KrishiAI):\s*/, ""),
+                timestamp: toIsoString(data.updatedAt),
+              };
+            })
+          : undefined,
+      };
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, callsPath);
+  }
+}
+
