@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import { KnowledgeDocument, INITIAL_KNOWLEDGE_DOCS } from "./knowledgeData.js";
 import { StructuredAdvisoryResponse } from "./llmService.js";
 import { ExtractedQueryContext, RetrievalResult } from "./ragEngine.js";
@@ -371,6 +373,17 @@ export const EVALUATION_DATASET: EvaluationItem[] = [
   }
 ];
 
+interface PersistedDatabaseState {
+  users: UserRecord[];
+  farms: FarmRecord[];
+  queries: QueryRecord[];
+  documents: KnowledgeDocument[];
+  evaluationRuns: EvaluationRunResult[];
+}
+
+const DB_DIR = path.join(process.cwd(), ".data");
+const DB_FILE = path.join(DB_DIR, "db.json");
+
 class InMemoryDatabase {
   private users: Map<string, UserRecord> = new Map();
   private farms: Map<string, FarmRecord> = new Map();
@@ -379,152 +392,221 @@ class InMemoryDatabase {
   private evaluationRuns: EvaluationRunResult[] = [];
 
   constructor() {
+    this.loadFromDisk();
     this.seedInitialData();
+    this.saveToDisk();
+  }
+
+  private loadFromDisk() {
+    try {
+      if (!fs.existsSync(DB_FILE)) return;
+      const raw = fs.readFileSync(DB_FILE, "utf-8");
+      if (!raw.trim()) return;
+      const parsed = JSON.parse(raw) as Partial<PersistedDatabaseState>;
+
+      if (Array.isArray(parsed.users)) {
+        for (const u of parsed.users) {
+          if (u && u.id) this.users.set(u.id, u);
+        }
+      }
+      if (Array.isArray(parsed.farms)) {
+        for (const f of parsed.farms) {
+          if (f && f.id) this.farms.set(f.id, f);
+        }
+      }
+      if (Array.isArray(parsed.queries)) {
+        for (const q of parsed.queries) {
+          if (q && q.id) this.queries.set(q.id, q);
+        }
+      }
+      if (Array.isArray(parsed.documents)) {
+        for (const d of parsed.documents) {
+          if (d && d.id) this.documents.set(d.id, d);
+        }
+      }
+      if (Array.isArray(parsed.evaluationRuns)) {
+        this.evaluationRuns = parsed.evaluationRuns;
+      }
+    } catch (err) {
+      console.warn("[DB] Failed to load persisted state, starting with seeded defaults:", err);
+    }
+  }
+
+  private saveToDisk() {
+    try {
+      if (!fs.existsSync(DB_DIR)) {
+        fs.mkdirSync(DB_DIR, { recursive: true });
+      }
+      const snapshot: PersistedDatabaseState = {
+        users: Array.from(this.users.values()),
+        farms: Array.from(this.farms.values()),
+        queries: Array.from(this.queries.values()),
+        documents: Array.from(this.documents.values()),
+        evaluationRuns: this.evaluationRuns
+      };
+      const tmpFile = `${DB_FILE}.tmp`;
+      fs.writeFileSync(tmpFile, JSON.stringify(snapshot), "utf-8");
+      fs.renameSync(tmpFile, DB_FILE);
+    } catch (err) {
+      console.warn("[DB] Failed to persist state to disk:", err);
+    }
   }
 
   private seedInitialData() {
-    // 1. Seed Demo Users
-    const farmerUser: UserRecord = {
-      id: "user-farmer-01",
-      name: "Ramesh Kumar",
-      email: "farmer@agriadvisory.org",
-      phone: "+91 98480 12345",
-      passwordHash: hashPassword("farmer123"),
-      role: "farmer",
-      preferredLanguage: "en",
-      createdAt: new Date("2026-01-01").toISOString()
-    };
-
-    const adminUser: UserRecord = {
-      id: "user-admin-01",
-      name: "Dr. K. Rao (KVK Scientist)",
-      email: "admin@agriadvisory.org",
-      phone: "+91 94401 56789",
-      passwordHash: hashPassword("admin123"),
-      role: "admin",
-      preferredLanguage: "en",
-      createdAt: new Date("2026-01-01").toISOString()
-    };
-
-    this.users.set(farmerUser.id, farmerUser);
-    this.users.set(adminUser.id, adminUser);
-
-    // 2. Seed Demo Farm for Farmer
-    const farm: FarmRecord = {
-      id: "farm-01",
-      userId: farmerUser.id,
-      state: "Andhra Pradesh",
-      district: "Guntur",
-      village: "Tenali",
-      farmSizeAcres: 4.5,
-      crop: "Paddy",
-      sowingDate: "2026-07-10",
-      soilType: "Clayey Alluvial Soil",
-      irrigationSource: "Canal & Borewell",
-      createdAt: new Date("2026-01-01").toISOString(),
-      updatedAt: new Date("2026-01-01").toISOString()
-    };
-    this.farms.set(farm.id, farm);
-
-    // 3. Seed Initial Knowledge Documents
-    for (const doc of INITIAL_KNOWLEDGE_DOCS) {
-      this.documents.set(doc.id, doc);
+    // 1. Seed Demo Users if not already present
+    if (!this.getUserByEmail("farmer@agriadvisory.org")) {
+      const farmerUser: UserRecord = {
+        id: "user-farmer-01",
+        name: "Ramesh Kumar",
+        email: "farmer@agriadvisory.org",
+        phone: "+91 98480 12345",
+        passwordHash: hashPassword("farmer123"),
+        role: "farmer",
+        preferredLanguage: "en",
+        createdAt: new Date("2026-01-01").toISOString()
+      };
+      this.users.set(farmerUser.id, farmerUser);
     }
 
-    // 4. Seed a few realistic historic queries
-    const demoQuery1: QueryRecord = {
-      id: "query-demo-01",
-      userId: farmerUser.id,
-      farmerName: farmerUser.name,
-      question: "My 35-day-old paddy crop leaves are showing spindle-shaped spots with gray centers.",
-      selectedCrop: "Paddy",
-      detectedCrop: "Paddy",
-      detectedIntent: "crop_disease",
-      confidence: "high",
-      language: "en",
-      createdAt: new Date("2026-08-20T10:15:00.000Z").toISOString(),
-      feedback: {
-        isUseful: true,
-        rating: 5,
-        comment: "Tricyclazole spray cleared the blast lesions in 10 days!",
-        submittedAt: new Date("2026-08-21T09:00:00.000Z").toISOString()
-      },
-      extractedContext: {
+    if (!this.getUserByEmail("admin@agriadvisory.org")) {
+      const adminUser: UserRecord = {
+        id: "user-admin-01",
+        name: "Dr. K. Rao (KVK Scientist)",
+        email: "admin@agriadvisory.org",
+        phone: "+91 94401 56789",
+        passwordHash: hashPassword("admin123"),
+        role: "admin",
+        preferredLanguage: "en",
+        createdAt: new Date("2026-01-01").toISOString()
+      };
+      this.users.set(adminUser.id, adminUser);
+    }
+
+    const seededFarmer = this.getUserByEmail("farmer@agriadvisory.org");
+
+    // 2. Seed Demo Farm for Farmer if missing
+    if (seededFarmer && !this.getFarmByUserId(seededFarmer.id)) {
+      const farm: FarmRecord = {
+        id: "farm-01",
+        userId: seededFarmer.id,
+        state: "Andhra Pradesh",
+        district: "Guntur",
+        village: "Tenali",
+        farmSizeAcres: 4.5,
         crop: "Paddy",
-        problem: "spindle-shaped spots with gray centers",
-        symptoms: ["spindle-shaped spots", "gray centers"],
-        growthStage: "35 days",
-        category: "crop_disease",
-        confidence: "high",
-        normalizedQuery: "paddy crop leaves spindle shaped spots gray centers",
-        language: "en"
-      },
-      retrievedChunks: [
-        {
-          chunk: {
-            chunkId: "doc-paddy-01-chunk-0",
-            documentId: "doc-paddy-01",
-            title: "ICAR Package of Practices for Rice (Paddy) - Blast and Bacterial Leaf Blight Management",
-            source: "ICAR - National Rice Research Institute (NRRI)",
-            crop: "Paddy",
-            category: "crop_disease",
-            language: "en",
-            pageNumber: 14,
-            chunkIndex: 0,
-            text: "Rice Blast: Spindle-shaped lesions with grey center and dark brown margin. Spray Tricyclazole 75% WP @ 0.6 g/L.",
-            createdAt: "2026-01-10T00:00:00.000Z"
-          },
-          similarityScore: 0.94,
-          rank: 1
-        }
-      ],
-      advisory: {
-        crop: "Paddy",
-        problem: "Rice Leaf Blast (Magnaporthe oryzae)",
-        likely_causes: [
-          "Fungal pathogen Magnaporthe oryzae proliferation under humid weather",
-          "Excessive nitrogenous fertilizer top-dressing",
-          "High cloud cover and intermittent drizzles"
-        ],
-        recommendations: [
-          {
-            title: "Foliar Fungicide Application",
-            description: "Apply Tricyclazole 75% WP @ 0.6 g/litre of water (120 g in 200 L water per acre) or Isoprothiolane 40% EC @ 1.5 ml/L.",
-            type: "chemical",
-            dosage: "0.6 g/L Tricyclazole 75% WP"
-          },
-          {
-            title: "Split Nitrogen Regimen",
-            description: "Temporarily postpone urea top-dressing until lesion sporulation ceases.",
-            type: "agronomic"
-          }
-        ],
-        precautions: [
-          "Avoid spraying during high noon heat or impending rainfall.",
-          "Maintain personal protective cloth masks while handling chemical concentrates."
-        ],
-        follow_up_questions: [
-          "Are you noticing any lesions on the leaf sheath or panicle neck?",
-          "Did you apply seed treatment prior to nursery raising?"
-        ],
-        confidence: "high",
-        confidence_reasoning: "High symptom alignment with ICAR-NRRI Rice Blast diagnostic criteria.",
-        sources: [
-          {
-            title: "ICAR Package of Practices for Rice - Blast Management",
-            source: "ICAR-NRRI Cuttack",
-            relevance: "Top Evidence Match (94% similarity)",
-            pageNumber: 14
-          }
-        ]
+        sowingDate: "2026-07-10",
+        soilType: "Clayey Alluvial Soil",
+        irrigationSource: "Canal & Borewell",
+        createdAt: new Date("2026-01-01").toISOString(),
+        updatedAt: new Date("2026-01-01").toISOString()
+      };
+      this.farms.set(farm.id, farm);
+    }
+
+    // 3. Seed Initial Knowledge Documents if empty
+    if (this.documents.size === 0) {
+      for (const doc of INITIAL_KNOWLEDGE_DOCS) {
+        this.documents.set(doc.id, doc);
       }
-    };
-    this.queries.set(demoQuery1.id, demoQuery1);
+    }
+
+    // 4. Seed a realistic historic query if none exist
+    if (seededFarmer && this.queries.size === 0) {
+      const demoQuery1: QueryRecord = {
+        id: "query-demo-01",
+        userId: seededFarmer.id,
+        farmerName: seededFarmer.name,
+        question: "My 35-day-old paddy crop leaves are showing spindle-shaped spots with gray centers.",
+        selectedCrop: "Paddy",
+        detectedCrop: "Paddy",
+        detectedIntent: "crop_disease",
+        confidence: "high",
+        language: "en",
+        createdAt: new Date("2026-08-20T10:15:00.000Z").toISOString(),
+        feedback: {
+          isUseful: true,
+          rating: 5,
+          comment: "Tricyclazole spray cleared the blast lesions in 10 days!",
+          submittedAt: new Date("2026-08-21T09:00:00.000Z").toISOString()
+        },
+        extractedContext: {
+          crop: "Paddy",
+          problem: "spindle-shaped spots with gray centers",
+          symptoms: ["spindle-shaped spots", "gray centers"],
+          growthStage: "35 days",
+          category: "crop_disease",
+          confidence: "high",
+          normalizedQuery: "paddy crop leaves spindle shaped spots gray centers",
+          language: "en"
+        },
+        retrievedChunks: [
+          {
+            chunk: {
+              chunkId: "doc-paddy-01-chunk-0",
+              documentId: "doc-paddy-01",
+              title: "ICAR Package of Practices for Rice (Paddy) - Blast and Bacterial Leaf Blight Management",
+              source: "ICAR - National Rice Research Institute (NRRI)",
+              crop: "Paddy",
+              category: "crop_disease",
+              language: "en",
+              pageNumber: 14,
+              chunkIndex: 0,
+              text: "Rice Blast: Spindle-shaped lesions with grey center and dark brown margin. Spray Tricyclazole 75% WP @ 0.6 g/L.",
+              createdAt: "2026-01-10T00:00:00.000Z"
+            },
+            similarityScore: 0.94,
+            rank: 1
+          }
+        ],
+        advisory: {
+          crop: "Paddy",
+          problem: "Rice Leaf Blast (Magnaporthe oryzae)",
+          likely_causes: [
+            "Fungal pathogen Magnaporthe oryzae proliferation under humid weather",
+            "Excessive nitrogenous fertilizer top-dressing",
+            "High cloud cover and intermittent drizzles"
+          ],
+          recommendations: [
+            {
+              title: "Foliar Fungicide Application",
+              description: "Apply Tricyclazole 75% WP @ 0.6 g/litre of water (120 g in 200 L water per acre) or Isoprothiolane 40% EC @ 1.5 ml/L.",
+              type: "chemical",
+              dosage: "0.6 g/L Tricyclazole 75% WP"
+            },
+            {
+              title: "Split Nitrogen Regimen",
+              description: "Temporarily postpone urea top-dressing until lesion sporulation ceases.",
+              type: "agronomic"
+            }
+          ],
+          precautions: [
+            "Avoid spraying during high noon heat or impending rainfall.",
+            "Maintain personal protective cloth masks while handling chemical concentrates."
+          ],
+          follow_up_questions: [
+            "Are you noticing any lesions on the leaf sheath or panicle neck?",
+            "Did you apply seed treatment prior to nursery raising?"
+          ],
+          confidence: "high",
+          confidence_reasoning: "High symptom alignment with ICAR-NRRI Rice Blast diagnostic criteria.",
+          sources: [
+            {
+              title: "ICAR Package of Practices for Rice - Blast Management",
+              source: "ICAR-NRRI Cuttack",
+              relevance: "Top Evidence Match (94% similarity)",
+              pageNumber: 14
+            }
+          ]
+        }
+      };
+      this.queries.set(demoQuery1.id, demoQuery1);
+    }
   }
 
   // User Operations
   getUserByEmail(email: string): UserRecord | undefined {
-    return Array.from(this.users.values()).find(u => u.email.toLowerCase() === email.toLowerCase());
+    const normalized = email.trim().toLowerCase();
+    return Array.from(this.users.values()).find(u => u.email.trim().toLowerCase() === normalized);
   }
 
   getUserById(id: string): UserRecord | undefined {
@@ -535,10 +617,12 @@ class InMemoryDatabase {
     const id = `user-${crypto.randomUUID().slice(0, 8)}`;
     const record: UserRecord = {
       ...userData,
+      email: userData.email.trim().toLowerCase(),
       id,
       createdAt: new Date().toISOString()
     };
     this.users.set(id, record);
+    this.saveToDisk();
     return record;
   }
 
@@ -547,6 +631,7 @@ class InMemoryDatabase {
     if (!user) return undefined;
     const updated = { ...user, ...updates };
     this.users.set(id, updated);
+    this.saveToDisk();
     return updated;
   }
 
@@ -568,6 +653,7 @@ class InMemoryDatabase {
         updatedAt: new Date().toISOString()
       };
       this.farms.set(farmData.id, updated);
+      this.saveToDisk();
       return updated;
     }
 
@@ -579,6 +665,7 @@ class InMemoryDatabase {
       updatedAt: new Date().toISOString()
     };
     this.farms.set(id, newRecord);
+    this.saveToDisk();
     return newRecord;
   }
 
@@ -595,6 +682,7 @@ class InMemoryDatabase {
       createdAt: new Date().toISOString()
     };
     this.queries.set(id, record);
+    this.saveToDisk();
     return record;
   }
 
@@ -618,6 +706,7 @@ class InMemoryDatabase {
     if (!query) return false;
     query.feedback = feedback;
     this.queries.set(queryId, query);
+    this.saveToDisk();
     return true;
   }
 
@@ -632,10 +721,15 @@ class InMemoryDatabase {
 
   saveDocument(doc: KnowledgeDocument): void {
     this.documents.set(doc.id, doc);
+    this.saveToDisk();
   }
 
   deleteDocument(id: string): boolean {
-    return this.documents.delete(id);
+    const deleted = this.documents.delete(id);
+    if (deleted) {
+      this.saveToDisk();
+    }
+    return deleted;
   }
 
   // Evaluation Runs
@@ -644,6 +738,7 @@ class InMemoryDatabase {
     if (this.evaluationRuns.length > 20) {
       this.evaluationRuns.pop();
     }
+    this.saveToDisk();
   }
 
   getEvaluationRuns(): EvaluationRunResult[] {

@@ -13,7 +13,9 @@ import {
   Award,
   RefreshCw,
   HelpCircle,
-  FileCheck
+  FileCheck,
+  AlertCircle,
+  X
 } from "lucide-react";
 import { api } from "../services/api.js";
 import { EvaluationItem, EvaluationRunResult } from "../types/index.js";
@@ -23,6 +25,7 @@ export const EvaluationBenchmark: React.FC = () => {
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [latestResult, setLatestResult] = useState<EvaluationRunResult | null>(null);
   const [activeFilter, setActiveFilter] = useState<'all' | 'pass' | 'fail'>('all');
+  const [benchmarkError, setBenchmarkError] = useState<string | null>(null);
 
   useEffect(() => {
     loadBenchmarkDataset();
@@ -39,11 +42,12 @@ export const EvaluationBenchmark: React.FC = () => {
 
   const handleRunBenchmark = async () => {
     setIsRunning(true);
+    setBenchmarkError(null);
     try {
       const result = await api.runEvaluationBenchmark();
       setLatestResult(result);
     } catch (err: any) {
-      alert(err.message || "Benchmark failed to run");
+      setBenchmarkError(err.message || "Benchmark failed to run");
     } finally {
       setIsRunning(false);
     }
@@ -97,6 +101,24 @@ export const EvaluationBenchmark: React.FC = () => {
           </motion.button>
         </div>
       </div>
+
+      {/* Error Display */}
+      {benchmarkError && (
+        <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs font-bold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <span>{benchmarkError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBenchmarkError(null)}
+            aria-label="Dismiss error"
+            className="p-0.5 hover:opacity-75 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Metrics Summary Cards (if benchmark has run) */}
       {latestResult && (

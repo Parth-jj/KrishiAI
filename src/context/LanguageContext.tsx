@@ -156,7 +156,16 @@ const translations: Record<LanguageCode, Record<string, string>> = {
     sevenDayOutlook: "7-Day Outlook",
     sprayFarmWindow: "Spray & Farm Window",
     farmModalTitle: "Configure Farm Profile Context",
-    farmModalDesc: "The AI advisory engine customizes chemical dosages and recommendations according to your location and crop size."
+    farmModalDesc: "The AI advisory engine customizes chemical dosages and recommendations according to your location and crop size.",
+    voiceStopBtn: "Stop Listening",
+    voiceSpeakNow: "Speak clearly about your crop issue...",
+    voiceUnsupported: "Voice input is not supported in this browser. Please type your question or try Chrome/Edge.",
+    voicePermissionDenied: "Microphone access was denied. Please allow microphone permission in your browser.",
+    voiceNoSpeech: "No speech detected. Please speak closer to your microphone and try again.",
+    voiceAudioCapture: "No microphone found. Please connect or enable a microphone.",
+    voiceNetworkError: "Voice recognition failed due to a network error. Please check your connection.",
+    voiceGenericError: "Could not process voice input. Please try again or type your question.",
+    voiceLanguageLabel: "Voice:"
   },
   te: {
     appTitle: "కృషిAI - సులభ వ్యవసాయ సలహా వేదిక",
@@ -305,7 +314,16 @@ const translations: Record<LanguageCode, Record<string, string>> = {
     sevenDayOutlook: "7 రోజుల అంచనా",
     sprayFarmWindow: "స్ప్రే సమయం & సలహా",
     farmModalTitle: "పొలం వివరాల ప్రణాళిక",
-    farmModalDesc: "మీ ప్రాంతం మరియు పంట విస్తీర్ణానికి తగినట్లుగా AI వ్యవస్థ మందు మోతాదులు మరియు సిఫారసులను సర్దుబాటు చేస్తుంది."
+    farmModalDesc: "మీ ప్రాంతం మరియు పంట విస్తీర్ణానికి తగినట్లుగా AI వ్యవస్థ మందు మోతాదులు మరియు సిఫారసులను సర్దుబాటు చేస్తుంది.",
+    voiceStopBtn: "ఆపండి",
+    voiceSpeakNow: "మీ పంట సమస్యను స్పష్టంగా చెప్పండి...",
+    voiceUnsupported: "ఈ బ్రౌజర్‌లో వాయిస్ ఇన్‌పుట్ అందుబాటులో లేదు. దయచేసి టైప్ చేయండి లేదా Chrome/Edge ఉపయోగించండి.",
+    voicePermissionDenied: "మైక్రోఫోన్ అనుమతి నిరాకరించబడింది. దయచేసి బ్రౌజర్ సెట్టింగ్స్‌లో అనుమతి ఇవ్వండి.",
+    voiceNoSpeech: "మాట వినిపించలేదు. మైక్రోఫోన్‌కు దగ్గరగా మాట్లాడి మళ్ళీ ప్రయత్నించండి.",
+    voiceAudioCapture: "మైక్రోఫోన్ కనుగొనబడలేదు. దయచేసి మీ డివైస్ మైక్రోఫోన్ తనిఖీ చేయండి.",
+    voiceNetworkError: "నెట్‌వర్క్ లోపం వల్ల వాయిస్ గుర్తింపు విఫలమైంది. మీ ఇంటర్నెట్ తనిఖీ చేయండి.",
+    voiceGenericError: "వాయిస్ ఇన్‌పుట్ తీసుకోలేకపోయాము. మళ్ళీ ప్రయత్నించండి లేదా టైప్ చేయండి.",
+    voiceLanguageLabel: "వాయిస్:"
   },
   hi: {
     appTitle: "कृषिAI - सरल कृषि परामर्श सेवा",
@@ -454,7 +472,16 @@ const translations: Record<LanguageCode, Record<string, string>> = {
     sevenDayOutlook: "7-दिवसीय",
     sprayFarmWindow: "छिड़काव व कृषि सलाह",
     farmModalTitle: "खेत विवरण विन्यास",
-    farmModalDesc: "AI सलाहकार इंजन आपके स्थान और फसल के आकार के अनुसार दवा की सटीक मात्रा और सिफारिशें तैयार करता है।"
+    farmModalDesc: "AI सलाहकार इंजन आपके स्थान और फसल के आकार के अनुसार दवा की सटीक मात्रा और सिफारिशें तैयार करता है।",
+    voiceStopBtn: "सुनना बंद करें",
+    voiceSpeakNow: "अपनी फसल की समस्या स्पष्ट रूप से बोलें...",
+    voiceUnsupported: "इस ब्राउज़र में वॉइस इनपुट समर्थित नहीं है। कृपया टाइप करें या Chrome/Edge का उपयोग करें।",
+    voicePermissionDenied: "माइक्रोफ़ोन की अनुमति अस्वीकार कर दी गई। कृपया ब्राउज़र में माइक्रोफ़ोन की अनुमति दें।",
+    voiceNoSpeech: "कोई आवाज़ नहीं मिली। कृपया माइक्रोफ़ोन के पास बोलें और पुनः प्रयास करें।",
+    voiceAudioCapture: "कोई माइक्रोफ़ोन नहीं मिला। कृपया अपना माइक्रोफ़ोन जांचें।",
+    voiceNetworkError: "नेटवर्क त्रुटि के कारण वॉइस पहचान विफल रही। कृपया अपना इंटरनेट कनेक्शन जांचें।",
+    voiceGenericError: "वॉइस इनपुट संसाधित नहीं हो सका। कृपया पुनः प्रयास करें या लिखें।",
+    voiceLanguageLabel: "आवाज़:"
   }
 };
 

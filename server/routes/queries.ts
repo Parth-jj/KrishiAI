@@ -93,7 +93,7 @@ queriesRouter.post("/", authenticateUser, async (req: Request, res: Response) =>
         extractedIntent: extractedContext.category,
         retrievedCount: retrievedChunks.length,
         topSimilarity: retrievedChunks[0]?.similarityScore || 0,
-        modelUsed: advisory.engineUsed || "gemini-3.8-flash (ICAR-Grounded RAG)"
+        modelUsed: advisory.engineUsed || "gemini-4-hydrogen (ICAR-Grounded RAG)"
       }
     });
   } catch (err: any) {

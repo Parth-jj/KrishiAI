@@ -29,6 +29,13 @@ import {
 import { useAuth } from "../context/AuthContext.js";
 import { useLanguage } from "../context/LanguageContext.js";
 import { api } from "../services/api.js";
+import { firebaseAuth } from "../firebase.js";
+import {
+  createTaskInFirestore,
+  deleteTaskFromFirestore,
+  loadTasksFromFirestore,
+  toggleTaskInFirestore,
+} from "../services/firestoreService.js";
 import { WeatherData } from "../types/index.js";
 
 interface HomeDashboardProps {
@@ -49,11 +56,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onAskQuestion,
   onNavigateTab
 }) => {
-  const { farm, user } = useAuth();
+  const { farm, user, isFirebaseAuth } = useAuth();
   const { language, t } = useLanguage();
 
   const [questionInput, setQuestionInput] = useState("");
   const [isListening, setIsListening] = useState(false);
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   const [tasksModalOpen, setTasksModalOpen] = useState(false);
   const [adviceModalOpen, setAdviceModalOpen] = useState(false);
@@ -63,8 +71,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     tips: Array<{ icon: string; text: string; detail?: string }>;
   } | null>(null);
 
-  // Local Farm Tasks state
-  const [tasks, setTasks] = useState<FarmTask[]>([
+  const DEFAULT_TASKS: FarmTask[] = [
     {
       id: "task-1",
       title: "Inspect cotton leaves for sucking pests & whitefly",
@@ -89,7 +96,31 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       completed: true,
       priority: "low"
     }
-  ]);
+  ];
+
+  // Farm Tasks state (persisted in Cloud Firestore when signed in with Google)
+  const [tasks, setTasks] = useState<FarmTask[]>(DEFAULT_TASKS);
+
+  useEffect(() => {
+    async function syncTasks() {
+      if (!isFirebaseAuth || !firebaseAuth.currentUser) return;
+      const uid = firebaseAuth.currentUser.uid;
+      try {
+        const fsTasks = await loadTasksFromFirestore(uid);
+        if (fsTasks.length > 0) {
+          setTasks(fsTasks);
+        } else {
+          const seeded = await Promise.all(
+            DEFAULT_TASKS.map((tItem) => createTaskInFirestore(uid, tItem))
+          );
+          setTasks(seeded);
+        }
+      } catch (err) {
+        console.warn("Could not load Firestore tasks:", err);
+      }
+    }
+    syncTasks();
+  }, [isFirebaseAuth, user?.id]);
 
   const [newTaskInput, setNewTaskInput] = useState("");
   const [newTaskCrop, setNewTaskCrop] = useState("Cotton");
@@ -113,8 +144,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
   // Speech Recognition Handler
   const toggleListening = () => {
+    setVoiceNotice(null);
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-      alert("Voice input is not supported in this browser. Please type your question.");
+      setVoiceNotice(t("voiceUnsupported"));
       return;
     }
 
@@ -136,11 +168,15 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         setQuestionInput(transcript);
         setIsListening(false);
       };
-      recognition.onerror = () => setIsListening(false);
+      recognition.onerror = () => {
+        setIsListening(false);
+        setVoiceNotice(t("voiceGenericError"));
+      };
       recognition.onend = () => setIsListening(false);
       recognition.start();
     } catch {
       setIsListening(false);
+      setVoiceNotice(t("voiceGenericError"));
     }
   };
 
@@ -151,10 +187,17 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   };
 
   const toggleTaskStatus = (id: string) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+    const target = tasks.find(tItem => tItem.id === id);
+    const nextCompleted = target ? !target.completed : true;
+    setTasks(prev => prev.map(tItem => tItem.id === id ? { ...tItem, completed: nextCompleted } : tItem));
+    if (isFirebaseAuth && firebaseAuth.currentUser) {
+      toggleTaskInFirestore(firebaseAuth.currentUser.uid, id, nextCompleted).catch(err =>
+        console.warn("Failed to update Firestore task:", err)
+      );
+    }
   };
 
-  const handleAddNewTask = (e: React.FormEvent) => {
+  const handleAddNewTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskInput.trim()) return;
     const newTask: FarmTask = {
@@ -167,10 +210,20 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     };
     setTasks([newTask, ...tasks]);
     setNewTaskInput("");
+    if (isFirebaseAuth && firebaseAuth.currentUser) {
+      createTaskInFirestore(firebaseAuth.currentUser.uid, newTask).catch(err =>
+        console.warn("Failed to save Firestore task:", err)
+      );
+    }
   };
 
   const deleteTask = (id: string) => {
-    setTasks(prev => prev.filter(t => t.id !== id));
+    setTasks(prev => prev.filter(tItem => tItem.id !== id));
+    if (isFirebaseAuth && firebaseAuth.currentUser) {
+      deleteTaskFromFirestore(firebaseAuth.currentUser.uid, id).catch(err =>
+        console.warn("Failed to delete Firestore task:", err)
+      );
+    }
   };
 
   return (
@@ -228,6 +281,23 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 </button>
               </div>
             </form>
+
+            {voiceNotice && (
+              <div className="flex items-center justify-between gap-2 px-3.5 py-2 rounded-2xl bg-[#FFF8E1]/95 border border-[#FFE082] text-[#7A4F01] text-xs font-semibold shadow-sm">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{voiceNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setVoiceNotice(null)}
+                  aria-label="Dismiss voice notice"
+                  className="p-0.5 hover:opacity-75 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
             {/* Quick Prompt Suggestions */}
             <div className="flex flex-wrap items-center gap-2 pt-1">

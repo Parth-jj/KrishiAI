@@ -306,8 +306,9 @@ export const FarmerDashboard: React.FC = () => {
 
   // Voice speech-to-text handler
   const handleVoiceInput = () => {
+    setErrorMsg(null);
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert("Voice input is not supported in this browser. Please use Chrome/Edge or type your question.");
+      setErrorMsg("Voice input is not supported in this browser. Please use Chrome/Edge or type your question.");
       return;
     }
 
@@ -402,7 +403,7 @@ export const FarmerDashboard: React.FC = () => {
       extractedIntent: q.detectedIntent || q.extractedContext?.problem || "Diagnosis",
       retrievedCount: q.retrievedChunks?.length || 0,
       topSimilarity: q.retrievedChunks?.[0]?.similarityScore || 0.94,
-      modelUsed: q.advisory?.engineUsed || 'Gemini 3.7 Flash',
+      modelUsed: q.advisory?.engineUsed || 'gemini-4-hydrogen (ICAR-Grounded RAG)',
       latencyMs: 320
     });
 

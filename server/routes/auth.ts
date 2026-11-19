@@ -1,9 +1,22 @@
 import express, { Request, Response } from "express";
+import fs from "fs";
+import path from "path";
 import jwt from "jsonwebtoken";
 import { db, hashPassword, verifyPassword, UserRecord } from "../db.js";
 
 export const authRouter = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "farmer_advisory_jwt_secret_key_2026";
+
+function getFirebaseApiKey(): string | null {
+  try {
+    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (!fs.existsSync(configPath)) return null;
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    return raw?.apiKey || null;
+  } catch {
+    return null;
+  }
+}
 
 // Helper to generate JWT token
 export function generateToken(user: UserRecord): string {
@@ -45,20 +58,22 @@ export function authenticateUser(req: Request, res: Response, next: express.Next
 authRouter.post("/register", (req: Request, res: Response) => {
   try {
     const { name, email, password, phone, role = "farmer", preferredLanguage = "en", farm } = req.body;
+    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const trimmedName = typeof name === "string" ? name.trim() : "";
 
-    if (!name || !email || !password) {
+    if (!trimmedName || !normalizedEmail || !password) {
       return res.status(400).json({ error: "Name, email, and password are required" });
     }
 
-    const existing = db.getUserByEmail(email);
+    const existing = db.getUserByEmail(normalizedEmail);
     if (existing) {
-      return res.status(400).json({ error: "An account with this email already exists" });
+      return res.status(400).json({ error: "An account with this email already exists. Please sign in instead." });
     }
 
     const newUser = db.createUser({
-      name,
-      email,
-      phone: phone || "",
+      name: trimmedName,
+      email: normalizedEmail,
+      phone: typeof phone === "string" ? phone.trim() : "",
       passwordHash: hashPassword(password),
       role: role === "admin" ? "admin" : "farmer",
       preferredLanguage
@@ -98,11 +113,13 @@ authRouter.post("/register", (req: Request, res: Response) => {
 authRouter.post("/login", (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
+    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
-    const user = db.getUserByEmail(email);
+    const user = db.getUserByEmail(normalizedEmail);
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
@@ -173,4 +190,66 @@ authRouter.put("/me", authenticateUser, (req: Request, res: Response) => {
 
   const { passwordHash: _, ...safeUser } = updated;
   return res.json({ message: "Profile updated successfully", user: safeUser });
+});
+
+// Exchange a verified Firebase ID Token for a backend API session JWT
+authRouter.post("/firebase-session", async (req: Request, res: Response) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken || typeof idToken !== "string") {
+      return res.status(400).json({ error: "Firebase idToken is required" });
+    }
+
+    const apiKey = getFirebaseApiKey();
+    if (!apiKey) {
+      return res.status(500).json({ error: "Firebase configuration missing on server" });
+    }
+
+    const verifyRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      }
+    );
+
+    if (!verifyRes.ok) {
+      return res.status(401).json({ error: "Invalid Firebase session token" });
+    }
+
+    const verifyData = (await verifyRes.json()) as {
+      users?: Array<{ localId: string; email?: string; displayName?: string }>;
+    };
+    const fbUser = verifyData.users?.[0];
+    if (!fbUser || !fbUser.email) {
+      return res.status(401).json({ error: "Firebase user not found" });
+    }
+
+    const normalizedEmail = fbUser.email.trim().toLowerCase();
+    let user = db.getUserByEmail(normalizedEmail);
+    if (!user) {
+      user = db.createUser({
+        name: fbUser.displayName || normalizedEmail.split("@")[0] || "Farmer",
+        email: normalizedEmail,
+        phone: "",
+        passwordHash: hashPassword(`fb_${fbUser.localId}_${Date.now()}`),
+        role: "farmer",
+        preferredLanguage: "en",
+      });
+    }
+
+    const token = generateToken(user);
+    const farm = db.getFarmByUserId(user.id);
+    const { passwordHash: _, ...safeUser } = user;
+
+    return res.json({
+      message: "Firebase session synced",
+      user: safeUser,
+      farm,
+      token,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to sync Firebase session" });
+  }
 });

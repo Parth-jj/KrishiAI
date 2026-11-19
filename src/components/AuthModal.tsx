@@ -9,7 +9,7 @@ interface AuthModalProps {
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
-  const { login, register, demoLogin } = useAuth();
+  const { login, loginWithGoogle, register, demoLogin } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,14 +29,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     try {
       if (isRegister) {
         await register({
-          name,
-          email,
+          name: name.trim(),
+          email: email.trim(),
           password,
-          phone,
+          phone: phone.trim(),
           farm: { crop, district, state: "Andhra Pradesh" }
         });
       } else {
-        await login(email, password);
+        await login(email.trim(), password);
       }
       onClose();
     } catch (err: any) {
@@ -47,12 +47,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   };
 
   const handleDemo = async (role: 'farmer' | 'admin') => {
+    setError(null);
     setLoading(true);
     try {
       await demoLogin(role);
       onClose();
     } catch (err: any) {
       setError(err.message || "Demo login failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await loginWithGoogle();
+      onClose();
+    } catch (err: any) {
+      setError(err.message || "Google sign-in failed");
     } finally {
       setLoading(false);
     }
@@ -118,6 +132,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             </motion.button>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={handleGoogle}
+          disabled={loading}
+          className="w-full mb-3 py-2.5 px-4 bg-white hover:bg-[#FAF8F5] text-[#1A2E1A] border border-[#D0DBC7] rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-60"
+        >
+          <span>Continue with Google (Cloud Sync)</span>
+        </button>
 
         <div className="relative flex py-2 items-center">
           <div className="flex-grow border-t border-[#E0E7D9]"></div>

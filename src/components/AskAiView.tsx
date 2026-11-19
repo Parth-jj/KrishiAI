@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Sparkles, 
@@ -15,14 +15,82 @@ import {
   AlertCircle,
   HelpCircle,
   Volume2,
-  Share2
+  Share2,
+  X
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext.js";
 import { useLanguage } from "../context/LanguageContext.js";
 import { api } from "../services/api.js";
+import { firebaseAuth } from "../firebase.js";
+import {
+  loadQueriesFromFirestore,
+  saveQueryFeedbackToFirestore,
+  saveQueryToFirestore,
+} from "../services/firestoreService.js";
 import { QueryRecord } from "../types/index.js";
 import { AdvisoryCard } from "./AdvisoryCard.js";
 import { QueryPipelineVisualizer } from "./QueryPipelineVisualizer.js";
+
+const VOICE_LOCALES = [
+  { code: "en-IN", label: "English (India)" },
+  { code: "hi-IN", label: "हिन्दी (भारत)" },
+  { code: "te-IN", label: "తెలుగు (భారతదేశం)" },
+] as const;
+
+type VoiceLocaleCode = (typeof VOICE_LOCALES)[number]["code"];
+
+interface SpeechRecognitionAlternativeLike {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognitionResultLike {
+  isFinal: boolean;
+  length: number;
+  [index: number]: SpeechRecognitionAlternativeLike;
+}
+
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: SpeechRecognitionResultLike;
+  };
+}
+
+interface SpeechRecognitionErrorEventLike {
+  error: string;
+  message?: string;
+}
+
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+}
+
+function getSpeechRecognitionConstructor(): (new () => SpeechRecognitionInstance) | null {
+  if (typeof window === "undefined") return null;
+  const win = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionInstance;
+    webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+  };
+  return win.SpeechRecognition || win.webkitSpeechRecognition || null;
+}
+
+function mapLanguageToVoiceLocale(lang: string): VoiceLocaleCode {
+  if (lang === "hi") return "hi-IN";
+  if (lang === "te") return "te-IN";
+  return "en-IN";
+}
 
 const CROPS = [
   "All",
@@ -68,7 +136,7 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
   initialQuery = "",
   initialCrop = "Cotton"
 }) => {
-  const { farm, user } = useAuth();
+  const { farm, user, isFirebaseAuth } = useAuth();
   const { language, t } = useLanguage();
 
   const [selectedCrop, setSelectedCrop] = useState<string>(initialCrop || farm?.crop || "Cotton");
@@ -79,11 +147,46 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
   const [recentQueries, setRecentQueries] = useState<QueryRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
+  const [voiceLocale, setVoiceLocale] = useState<VoiceLocaleCode>(() =>
+    mapLanguageToVoiceLocale(language)
+  );
+  const [interimTranscript, setInterimTranscript] = useState<string>("");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const baseQuestionRef = useRef<string>("");
+  const manualStopRef = useRef<boolean>(false);
+  const isSpeechSupported = Boolean(getSpeechRecognitionConstructor());
+
+  // Sync default speech recognition locale when app language changes
+  useEffect(() => {
+    setVoiceLocale(mapLanguageToVoiceLocale(language));
+  }, [language]);
+
+  // Clean up active SpeechRecognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        manualStopRef.current = true;
+        try {
+          recognitionRef.current.abort();
+        } catch {
+          // Ignore cleanup errors
+        }
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
 
   // Load recent queries
   useEffect(() => {
     async function loadHistory() {
       try {
+        if (isFirebaseAuth && firebaseAuth.currentUser) {
+          const fsQueries = await loadQueriesFromFirestore(firebaseAuth.currentUser.uid);
+          setRecentQueries(fsQueries.slice(0, 5));
+          return;
+        }
         const queries = await api.getQueries();
         setRecentQueries(queries.slice(0, 5));
       } catch (e) {
@@ -91,7 +194,7 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
       }
     }
     loadHistory();
-  }, []);
+  }, [isFirebaseAuth, user?.id]);
 
   // If initialQuery is passed and not empty, auto submit
   useEffect(() => {
@@ -102,40 +205,119 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
     }
   }, [initialQuery, initialCrop]);
 
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      manualStopRef.current = true;
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // Fallback if already stopped
+      }
+    }
+    setIsListening(false);
+    setInterimTranscript("");
+  };
+
   const toggleListening = () => {
-    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-      alert("Voice input is not supported in this browser. Please type your question.");
+    setVoiceError(null);
+
+    const SpeechRecognitionCtor = getSpeechRecognitionConstructor();
+    if (!SpeechRecognitionCtor) {
+      setVoiceError(t("voiceUnsupported"));
       return;
     }
 
     if (isListening) {
-      setIsListening(false);
+      stopListening();
       return;
     }
 
     try {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = language === 'hi' ? 'hi-IN' : language === 'te' ? 'te-IN' : 'en-IN';
+      const recognition = new SpeechRecognitionCtor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      recognition.lang = voiceLocale;
 
-      recognition.onstart = () => setIsListening(true);
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setQuestion(transcript);
-        setIsListening(false);
+      baseQuestionRef.current = question.trim();
+      manualStopRef.current = false;
+      recognitionRef.current = recognition;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setInterimTranscript("");
       };
-      recognition.onerror = () => setIsListening(false);
-      recognition.onend = () => setIsListening(false);
+
+      recognition.onresult = (event: SpeechRecognitionEventLike) => {
+        let finalTranscript = "";
+        let interim = "";
+
+        for (let i = 0; i < event.results.length; i += 1) {
+          const result = event.results[i];
+          const text = result?.[0]?.transcript || "";
+          if (result.isFinal) {
+            finalTranscript += `${text} `;
+          } else {
+            interim += text;
+          }
+        }
+
+        const combined = [
+          baseQuestionRef.current,
+          finalTranscript.trim(),
+          interim.trim(),
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        setInterimTranscript(interim.trim());
+        setQuestion(combined);
+      };
+
+      recognition.onerror = (event: SpeechRecognitionErrorEventLike) => {
+        const code = event?.error || "";
+        if (code === "aborted" && manualStopRef.current) {
+          setIsListening(false);
+          setInterimTranscript("");
+          return;
+        }
+
+        if (code === "not-allowed" || code === "service-not-allowed") {
+          setVoiceError(t("voicePermissionDenied"));
+        } else if (code === "no-speech") {
+          setVoiceError(t("voiceNoSpeech"));
+        } else if (code === "audio-capture") {
+          setVoiceError(t("voiceAudioCapture"));
+        } else if (code === "network") {
+          setVoiceError(t("voiceNetworkError"));
+        } else {
+          setVoiceError(t("voiceGenericError"));
+        }
+
+        setIsListening(false);
+        setInterimTranscript("");
+      };
+
+      recognition.onend = () => {
+        recognitionRef.current = null;
+        setIsListening(false);
+        setInterimTranscript("");
+      };
+
       recognition.start();
     } catch {
+      recognitionRef.current = null;
       setIsListening(false);
+      setInterimTranscript("");
+      setVoiceError(t("voiceGenericError"));
     }
   };
 
   const handleProcessQuery = async (queryText: string, cropName?: string) => {
     if (!queryText.trim()) return;
+    if (isListening) {
+      stopListening();
+    }
     setIsProcessing(true);
     setError(null);
 
@@ -147,6 +329,12 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
       );
       setCurrentQueryRecord(result.data);
       setPipelineExecution(result.pipelineExecution);
+
+      if (isFirebaseAuth && firebaseAuth.currentUser) {
+        await saveQueryToFirestore(firebaseAuth.currentUser.uid, result.data).catch((fsErr) =>
+          console.warn("Firestore query persistence skipped:", fsErr)
+        );
+      }
 
       // Prepend to recent
       setRecentQueries(prev => [result.data, ...prev.filter(q => q.id !== result.data.id)].slice(0, 5));
@@ -195,7 +383,13 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
 
         {/* Big Interactive Query Box */}
         <form onSubmit={handleSubmit} className="mt-6">
-          <div className="bg-[#FAF8F5] border border-[#EAE5DC] focus-within:border-[#256030] focus-within:ring-2 focus-within:ring-[#256030]/20 rounded-2xl p-3 sm:p-4 shadow-inner space-y-3 transition-all">
+          <div
+            className={`bg-[#FAF8F5] border rounded-2xl p-3 sm:p-4 shadow-inner space-y-3 transition-all ${
+              isListening
+                ? "border-[#D9534F] ring-2 ring-[#D9534F]/20"
+                : "border-[#EAE5DC] focus-within:border-[#256030] focus-within:ring-2 focus-within:ring-[#256030]/20"
+            }`}
+          >
             <textarea
               id="ai-question-textarea"
               rows={3}
@@ -205,11 +399,59 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
               className="w-full bg-transparent text-sm sm:text-base font-semibold text-[#193B20] placeholder-[#8A9C8D] focus:outline-none resize-none"
             />
 
-            <div className="flex items-center justify-between pt-2 border-t border-[#EAE5DC]">
-              <div className="flex items-center gap-2">
+            {/* Live Voice Listening Status Bar */}
+            <AnimatePresence>
+              {isListening && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#FDEDEC] border border-[#F5C6CB] text-[#9E2A2B] text-xs font-semibold"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#D9534F] animate-ping shrink-0" />
+                    <span className="truncate">
+                      {interimTranscript || t("voiceSpeakNow")}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={stopListening}
+                    className="shrink-0 text-[11px] font-extrabold underline cursor-pointer"
+                  >
+                    {t("voiceStopBtn")}
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Voice Error / Browser Support Notice */}
+            {voiceError && (
+              <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#FFF8E1] border border-[#FFE082] text-[#7A4F01] text-xs font-semibold">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{voiceError}</span>
+                </div>
                 <button
                   type="button"
+                  onClick={() => setVoiceError(null)}
+                  aria-label="Dismiss voice notice"
+                  className="p-0.5 hover:opacity-75 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#EAE5DC]">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  id="voice-input-toggle-btn"
                   onClick={toggleListening}
+                  aria-pressed={isListening}
+                  aria-label={isListening ? t("voiceStopBtn") : t("voiceInputBtn")}
+                  title={!isSpeechSupported ? t("voiceUnsupported") : undefined}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
                     isListening
                       ? "bg-[#D9534F] text-white animate-pulse"
@@ -217,8 +459,53 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
                   }`}
                 >
                   {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                  <span>{isListening ? t('listening') : t('voiceInputBtn')}</span>
+                  <span>{isListening ? t('voiceStopBtn') : t('voiceInputBtn')}</span>
                 </button>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-[#6E8070] hidden sm:inline">
+                    {t("voiceLanguageLabel")}
+                  </span>
+                  <select
+                    aria-label="Voice input language"
+                    value={voiceLocale}
+                    disabled={isListening}
+                    onChange={(e) => setVoiceLocale(e.target.value as VoiceLocaleCode)}
+                    className="bg-[#F5F2EB] border border-[#EAE5DC] text-[#193B20] font-bold text-[11px] rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#256030] disabled:opacity-60"
+                  >
+                    {VOICE_LOCALES.map((loc) => (
+                      <option key={loc.code} value={loc.code}>
+                        {loc.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {question.trim().length > 0 && !isProcessing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      baseQuestionRef.current = "";
+                      if (recognitionRef.current) {
+                        manualStopRef.current = true;
+                        try {
+                          recognitionRef.current.abort();
+                        } catch {
+                          // Ignore abort errors
+                        }
+                        recognitionRef.current = null;
+                      }
+                      setIsListening(false);
+                      setInterimTranscript("");
+                      setQuestion("");
+                      setVoiceError(null);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-[#6E8070] hover:text-[#193B20] hover:bg-[#EAE5DC]/60 transition cursor-pointer flex items-center gap-1"
+                  >
+                    <X className="w-3 h-3" />
+                    <span>Clear</span>
+                  </button>
+                )}
               </div>
 
               <button
@@ -290,7 +577,16 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
               setQuestion(fq);
               handleProcessQuery(fq, selectedCrop);
             }}
-            onFeedbackSubmitted={() => {}}
+            onFeedbackSubmitted={(isUseful, comment) => {
+              if (isFirebaseAuth && firebaseAuth.currentUser) {
+                saveQueryFeedbackToFirestore(
+                  firebaseAuth.currentUser.uid,
+                  currentQueryRecord.id,
+                  isUseful,
+                  comment
+                ).catch((fsErr) => console.warn("Firestore feedback sync skipped:", fsErr));
+              }
+            }}
           />
 
           {pipelineExecution && (
@@ -319,7 +615,9 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
                     {q.question}
                   </p>
                   <div className="flex items-center gap-2 text-[10px] text-[#6E8070]">
-                    <span className="font-bold text-[#256030]">{q.crop || "General"}</span>
+                    <span className="font-bold text-[#256030]">
+                      {q.detectedCrop || q.selectedCrop || "General"}
+                    </span>
                     <span>•</span>
                     <span>{new Date(q.createdAt).toLocaleDateString()}</span>
                   </div>

@@ -199,28 +199,45 @@ CRITICAL: Translate all answers, solutions, remedies, causes, and dosages comple
 Please analyze the problem and generate a comprehensive, structured advisory JSON following the exact schema.`;
 
     if (ai) {
-      // Valid Gemini models according to @google/genai guidelines with separate quota pools
-      const candidateModels = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.7-flash"];
-      
+      // Valid Gemini models per @google/genai skill guidelines
+      const candidateModels = ["gemini-4-hydrogen", "gemini-3.1-flash-lite"];
+      const withTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+        new Promise<T>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+          promise.then(
+            (val) => {
+              clearTimeout(timer);
+              resolve(val);
+            },
+            (err) => {
+              clearTimeout(timer);
+              reject(err);
+            }
+          );
+        });
+
       for (const modelName of candidateModels) {
-        let maxAttempts = 2;
+        const maxAttempts = 2;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
-            const response = await ai.models.generateContent({
-              model: modelName,
-              contents: userPrompt,
-              config: {
-                systemInstruction: systemPrompt,
-                responseMimeType: "application/json",
-                // Optimize response latency for Gemini 3.x Flash models
-                thinkingConfig: {
-                  thinkingLevel: ThinkingLevel.LOW
-                },
-                maxOutputTokens: 2048,
-                temperature: 0.2,
-                responseSchema: ADVISORY_SCHEMA
-              }
-            });
+            const response = await withTimeout(
+              ai.models.generateContent({
+                model: modelName,
+                contents: userPrompt,
+                config: {
+                  systemInstruction: systemPrompt,
+                  responseMimeType: "application/json",
+                  ...(modelName === "gemini-4-hydrogen"
+                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                    : {}),
+                  maxOutputTokens: 2048,
+                  temperature: 0.2,
+                  responseSchema: ADVISORY_SCHEMA
+                }
+              }),
+              9000,
+              `Gemini generateAdvisory (${modelName})`
+            );
 
             if (response.text) {
               let cleanedText = response.text.trim();
@@ -252,15 +269,13 @@ Please analyze the problem and generate a comprehensive, structured advisory JSO
             // For quota exhaustion (429), immediately switch to next model without retrying the exhausted model
             if (isQuotaExhausted) {
               console.info(`[LLM Service] ${modelName} quota reached. Switching to alternative model candidate...`);
-              break; // Immediately move to next candidate
+              break;
             } else if (isSpike503 && attempt < maxAttempts) {
-              // For 503 high-demand spike, do one brief 300ms retry
-              const backoffMs = 300;
-              await delay(backoffMs);
+              await delay(300);
               continue;
             } else {
-              console.info(`[LLM Service] ${modelName} busy/unavailable. Falling back to next model candidate...`);
-              break; // Try next candidate model
+              console.info(`[LLM Service] ${modelName} busy/unavailable (${message}). Falling back...`);
+              break;
             }
           }
         }
@@ -287,7 +302,21 @@ Please analyze the problem and generate a comprehensive, structured advisory JSO
     const ai = this.getClient();
 
     if (ai) {
-      const candidateModels = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.7-flash"];
+      const candidateModels = ["gemini-4-hydrogen", "gemini-3.1-flash-lite"];
+      const withTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+        new Promise<T>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+          promise.then(
+            (val) => {
+              clearTimeout(timer);
+              resolve(val);
+            },
+            (err) => {
+              clearTimeout(timer);
+              reject(err);
+            }
+          );
+        });
       const prompt = `You are an expert Indian agricultural translator specializing in ICAR package of practices and rural farming communication.
 Translate the following agricultural advisory JSON completely into ${targetLangName}.
 
@@ -308,21 +337,25 @@ ADVISORY JSON TO TRANSLATE:
 ${JSON.stringify(advisory, null, 2)}`;
 
       for (const modelName of candidateModels) {
-        let maxAttempts = 2;
+        const maxAttempts = 2;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
-            const response = await ai.models.generateContent({
-              model: modelName,
-              contents: prompt,
-              config: {
-                responseMimeType: "application/json",
-                responseSchema: ADVISORY_SCHEMA,
-                thinkingConfig: {
-                  thinkingLevel: ThinkingLevel.LOW
-                },
-                temperature: 0.1
-              }
-            });
+            const response = await withTimeout(
+              ai.models.generateContent({
+                model: modelName,
+                contents: prompt,
+                config: {
+                  responseMimeType: "application/json",
+                  responseSchema: ADVISORY_SCHEMA,
+                  ...(modelName === "gemini-4-hydrogen"
+                    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                    : {}),
+                  temperature: 0.1
+                }
+              }),
+              8000,
+              `Gemini translateAdvisory (${modelName})`
+            );
 
             if (response.text) {
               const parsed = JSON.parse(response.text.trim());

@@ -17,7 +17,8 @@ import {
   BarChart, 
   ExternalLink,
   BookOpen,
-  Filter
+  Filter,
+  X
 } from "lucide-react";
 import { api } from "../services/api.js";
 import { AdminStats, KnowledgeDocument, QueryRecord, KnowledgeChunk } from "../types/index.js";
@@ -29,6 +30,8 @@ export const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'documents' | 'ingest' | 'queries'>('documents');
   const [loading, setLoading] = useState<boolean>(true);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Ingestion Form State
   const [newDocTitle, setNewDocTitle] = useState("");
@@ -70,8 +73,9 @@ export const AdminDashboard: React.FC = () => {
 
   const handleIngestDocument = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     if (!newDocTitle.trim() || !newDocContent.trim()) {
-      alert("Please provide both document title and content.");
+      setErrorMessage("Please provide both document title and content.");
       return;
     }
 
@@ -91,32 +95,33 @@ export const AdminDashboard: React.FC = () => {
       setActiveTab('documents');
       loadAllData();
     } catch (err: any) {
-      alert(err.message || "Failed to ingest document");
+      setErrorMessage(err.message || "Failed to ingest document");
     } finally {
       setIsIngesting(false);
     }
   };
 
   const handleDeleteDocument = async (id: string, title: string) => {
-    if (!confirm(`Are you sure you want to remove "${title}" from the knowledge base?`)) return;
-
+    setErrorMessage(null);
     try {
       await api.deleteDocument(id);
+      setConfirmDeleteId(null);
       setActionMessage(`Document "${title}" removed.`);
       loadAllData();
     } catch (err: any) {
-      alert(err.message || "Failed to delete document");
+      setErrorMessage(err.message || "Failed to delete document");
     }
   };
 
   const handleReindex = async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       const msg = await api.reindexKnowledgeBase();
       setActionMessage(msg);
       loadAllData();
     } catch (err: any) {
-      alert(err.message || "Failed to reindex");
+      setErrorMessage(err.message || "Failed to reindex");
     } finally {
       setLoading(false);
     }
@@ -176,7 +181,21 @@ export const AdminDashboard: React.FC = () => {
       {actionMessage && (
         <div className="p-4 bg-[#E8F5E9] border-2 border-[#C8E6C9] text-[#2E7D32] rounded-2xl text-xs font-bold flex items-center justify-between shadow-2xs">
           <span>{actionMessage}</span>
-          <button onClick={() => setActionMessage(null)} className="text-[#2E7D32] hover:text-[#1E3D1A] font-black cursor-pointer">✕</button>
+          <button onClick={() => setActionMessage(null)} className="text-[#2E7D32] hover:text-[#1E3D1A] font-black cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="p-4 bg-rose-50 border-2 border-rose-200 text-rose-800 rounded-2xl text-xs font-bold flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+            <span>{errorMessage}</span>
+          </div>
+          <button onClick={() => setErrorMessage(null)} className="text-rose-700 hover:text-rose-900 font-black cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -410,15 +429,34 @@ export const AdminDashboard: React.FC = () => {
                         <span>View Grounding Chunks</span>
                       </motion.button>
 
-                      <motion.button
-                        onClick={() => handleDeleteDocument(doc.id, doc.title)}
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
-                        title="Delete Document"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </motion.button>
+                      {confirmDeleteId === doc.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDocument(doc.id, doc.title)}
+                            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold rounded-lg transition cursor-pointer"
+                          >
+                            Confirm Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-[11px] font-bold rounded-lg transition cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <motion.button
+                          onClick={() => setConfirmDeleteId(doc.id)}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                          title="Delete Document"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </motion.button>
+                      )}
                     </div>
                   </div>
                 );

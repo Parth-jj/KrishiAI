@@ -1,0 +1,289 @@
+{
+  "entities": {
+    "UserPublic": {
+      "title": "UserPublic",
+      "description": "Non-PII farmer or agronomist public profile metadata.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID matching the document ID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the farmer or agronomist.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "enum": ["farmer", "admin"],
+          "description": "Account role; client creation is locked to farmer."
+        },
+        "preferredLanguage": {
+          "type": "string",
+          "enum": ["en", "hi", "te"],
+          "description": "Preferred UI and advisory language code."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-updated timestamp."
+        }
+      },
+      "required": ["uid", "name", "role", "preferredLanguage", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated PII contact information for a user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address.",
+          "maxLength": 200
+        },
+        "phone": {
+          "type": "string",
+          "description": "Optional user phone number.",
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-updated timestamp."
+        }
+      },
+      "required": ["userId", "email", "createdAt", "updatedAt"]
+    },
+    "Farm": {
+      "title": "Farm",
+      "description": "Farmer agricultural plot profile used for RAG context personalization.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "district": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "village": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "farmSizeAcres": {
+          "type": "number",
+          "description": "Farm acreage."
+        },
+        "crop": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "sowingDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "soilType": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "irrigationSource": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "state", "district", "farmSizeAcres", "crop", "soilType", "irrigationSource", "createdAt", "updatedAt"]
+    },
+    "QueryAdvisory": {
+      "title": "QueryAdvisory",
+      "description": "Persisted agricultural query and ICAR-grounded advisory result.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "farmerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "selectedCrop": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "detectedCrop": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "detectedIntent": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "language": {
+          "type": "string",
+          "enum": ["en", "hi", "te"]
+        },
+        "problem": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "likelyCauses": {
+          "type": "array",
+          "description": "Bounded list of likely agronomic causes (max 10)."
+        },
+        "recommendationTitles": {
+          "type": "array",
+          "description": "Bounded list of action titles (max 10)."
+        },
+        "recommendationDetails": {
+          "type": "array",
+          "description": "Bounded list of action descriptions/dosages (max 10)."
+        },
+        "precautions": {
+          "type": "array",
+          "description": "Bounded list of safety precautions (max 10)."
+        },
+        "sourceTitles": {
+          "type": "array",
+          "description": "Bounded list of ICAR source citations (max 10)."
+        },
+        "engineUsed": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "feedbackUseful": {
+          "type": "boolean"
+        },
+        "feedbackComment": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "farmerName", "question", "detectedCrop", "detectedIntent", "confidence", "language", "problem", "likelyCauses", "recommendationTitles", "recommendationDetails", "precautions", "sourceTitles", "createdAt", "updatedAt"]
+    },
+    "FarmTask": {
+      "title": "FarmTask",
+      "description": "Daily farm operation task item for spraying, weeding, or irrigation.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "crop": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "dueDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "title", "crop", "dueDate", "completed", "priority", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublic" },
+      "description": "Public non-PII user profile keyed by Firebase Auth UID."
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Isolated PII contact document accessible only to the owner or admin."
+    },
+    "/users/{userId}/farms/{farmId}": {
+      "schema": { "$ref": "#/entities/Farm" },
+      "description": "User-owned farm plot profiles."
+    },
+    "/users/{userId}/queries/{queryId}": {
+      "schema": { "$ref": "#/entities/QueryAdvisory" },
+      "description": "User-owned ICAR-grounded query history and feedback."
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/FarmTask" },
+      "description": "User-owned daily farm checklist tasks."
+    }
+  }
+}

@@ -17,6 +17,7 @@ import { FarmProfileModal } from "./components/FarmProfileModal.js";
 import { AuthModal } from "./components/AuthModal.js";
 import { LoginPage } from "./components/LoginPage.js";
 import { KisanSathiLogoIcon } from "./components/FarmIllustrations.js";
+import { ErrorBoundary } from "./components/ErrorBoundary.js";
 
 export function AppContent() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -140,10 +141,12 @@ export function AppContent() {
 
 export default function App() {
   return (
-    <LanguageProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </LanguageProvider>
+    <ErrorBoundary>
+      <LanguageProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </LanguageProvider>
+    </ErrorBoundary>
   );
 }

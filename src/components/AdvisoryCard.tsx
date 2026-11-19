@@ -22,7 +22,9 @@ import {
   Clock,
   Layers,
   Languages,
-  Loader2
+  Loader2,
+  AlertCircle,
+  X
 } from "lucide-react";
 import { StructuredAdvisory, KnowledgeChunk, QueryRecord } from "../types/index.js";
 import { api } from "../services/api.js";
@@ -35,7 +37,7 @@ interface AdvisoryCardProps {
   retrievedChunks?: Array<{ chunk: KnowledgeChunk; similarityScore: number; rank: number }>;
   onAskFollowUp?: (followUpQuestion: string) => void;
   queryRecord?: QueryRecord;
-  onFeedbackSubmitted?: () => void;
+  onFeedbackSubmitted?: (isUseful: boolean, comment?: string) => void;
 }
 
 export const AdvisoryCard: React.FC<AdvisoryCardProps> = ({
@@ -54,6 +56,7 @@ export const AdvisoryCard: React.FC<AdvisoryCardProps> = ({
   const [feedbackUseful, setFeedbackUseful] = useState<boolean | null>(null);
   const [feedbackComment, setFeedbackComment] = useState<string>("");
   const [showSources, setShowSources] = useState<boolean>(false);
+  const [speechNotice, setSpeechNotice] = useState<string | null>(null);
 
   // Safe extraction of parameters
   const effectiveId = queryId || queryRecord?.id;
@@ -161,8 +164,9 @@ export const AdvisoryCard: React.FC<AdvisoryCardProps> = ({
 
   // Text-To-Speech handler
   const toggleSpeech = () => {
+    setSpeechNotice(null);
     if (!('speechSynthesis' in window)) {
-      alert("Text-to-speech is not supported by your browser.");
+      setSpeechNotice("Text-to-speech is not supported by your browser.");
       return;
     }
 
@@ -202,12 +206,12 @@ export const AdvisoryCard: React.FC<AdvisoryCardProps> = ({
       await api.submitFeedback(effectiveId, isUseful, feedbackComment);
       setFeedbackUseful(isUseful);
       setFeedbackSubmitted(true);
-      if (onFeedbackSubmitted) onFeedbackSubmitted();
+      if (onFeedbackSubmitted) onFeedbackSubmitted(isUseful, feedbackComment);
     } catch (err) {
       console.warn("Feedback submission error:", err);
       setFeedbackUseful(isUseful);
       setFeedbackSubmitted(true);
-      if (onFeedbackSubmitted) onFeedbackSubmitted();
+      if (onFeedbackSubmitted) onFeedbackSubmitted(isUseful, feedbackComment);
     }
   };
 
@@ -312,6 +316,24 @@ export const AdvisoryCard: React.FC<AdvisoryCardProps> = ({
             <Loader2 className="w-4 h-4 animate-spin text-[#FFD700]" />
             <span>{t("translatingAdvisory")}</span>
           </motion.div>
+        )}
+
+        {/* Speech Notice Banner */}
+        {speechNotice && (
+          <div className="mt-3 px-3 py-2 bg-[#FFF8E1] border border-[#FFE082] rounded-xl flex items-center justify-between gap-2 text-xs text-[#7A4F01] font-semibold">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{speechNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSpeechNotice(null)}
+              aria-label="Dismiss audio notice"
+              className="p-0.5 hover:opacity-75 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
 
         {/* Localized summary if in Telugu / Hindi */}

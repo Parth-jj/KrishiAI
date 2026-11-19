@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion } from "motion/react";
-import { MapPin, Sprout, Layers, Droplets, Calendar, Sparkles } from "lucide-react";
+import { MapPin, Sprout, Layers, Droplets, Calendar, Sparkles, AlertCircle } from "lucide-react";
 import { useAuth } from "../context/AuthContext.js";
 
 interface FarmProfileModalProps {
@@ -20,12 +20,14 @@ export const FarmProfileModal: React.FC<FarmProfileModalProps> = ({ isOpen, onCl
   const [soilType, setSoilType] = useState(farm?.soilType || "Alluvial Black Soil");
   const [irrigationSource, setIrrigationSource] = useState(farm?.irrigationSource || "Canal / Borewell");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setSaveError(null);
     try {
       await updateFarm({
         state,
@@ -39,7 +41,7 @@ export const FarmProfileModal: React.FC<FarmProfileModalProps> = ({ isOpen, onCl
       });
       onClose();
     } catch (err: any) {
-      alert(err.message || "Failed to update farm profile");
+      setSaveError(err.message || "Failed to update farm profile");
     } finally {
       setSaving(false);
     }
@@ -69,6 +71,12 @@ export const FarmProfileModal: React.FC<FarmProfileModalProps> = ({ isOpen, onCl
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+          {saveError && (
+            <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <span>{saveError}</span>
+            </div>
+          )}
           
           <div className="grid grid-cols-2 gap-3">
             <div>
