@@ -449,7 +449,10 @@ interface PersistedDatabaseState {
   voiceCalls: VoiceCallRecord[];
 }
 
-const DB_DIR = path.join(process.cwd(), ".data");
+const DB_DIR =
+  process.env.VERCEL === "1" || Boolean(process.env.VERCEL_URL)
+    ? "/tmp/.data"
+    : path.join(process.cwd(), ".data");
 const DB_FILE = path.join(DB_DIR, "db.json");
 
 class InMemoryDatabase {

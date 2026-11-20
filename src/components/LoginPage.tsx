@@ -24,6 +24,7 @@ import { KisanSathiLogoIcon, SidebarFarmLandscape } from "./FarmIllustrations.js
 import { useAuth } from "../context/AuthContext.js";
 import { useLanguage, LanguageCode } from "../context/LanguageContext.js";
 import { VoiceCallModal } from "./VoiceCallModal.js";
+import { formatUserAuthError } from "../utils/errorHelpers.js";
 
 export const LoginPage: React.FC = () => {
   const { login, loginWithGoogle, register, demoLogin, isLoading } = useAuth();
@@ -86,7 +87,9 @@ export const LoginPage: React.FC = () => {
         });
       }
     } catch (err: any) {
-      setErrorMessage(err.message || "Authentication failed. Please check your details and try again.");
+      setErrorMessage(
+        formatUserAuthError(err, "Authentication failed. Please check your details and try again.")
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -98,7 +101,7 @@ export const LoginPage: React.FC = () => {
     try {
       await demoLogin(role);
     } catch (err: any) {
-      setErrorMessage(err.message || "Demo login failed");
+      setErrorMessage(formatUserAuthError(err, "Demo login failed"));
     } finally {
       setIsSubmitting(false);
     }
@@ -110,7 +113,7 @@ export const LoginPage: React.FC = () => {
     try {
       await loginWithGoogle();
     } catch (err: any) {
-      setErrorMessage(err.message || "Google sign-in failed. Please try again.");
+      setErrorMessage(formatUserAuthError(err, "Google sign-in failed. Please try again."));
     } finally {
       setIsSubmitting(false);
     }

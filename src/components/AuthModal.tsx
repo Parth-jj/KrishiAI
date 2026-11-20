@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { motion } from "motion/react";
 import { User, Lock, Mail, Phone, Sprout, ShieldCheck, Sparkles, ArrowRight } from "lucide-react";
 import { useAuth } from "../context/AuthContext.js";
+import { formatUserAuthError } from "../utils/errorHelpers.js";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -40,7 +41,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       }
       onClose();
     } catch (err: any) {
-      setError(err.message || "Authentication error");
+      setError(formatUserAuthError(err, "Authentication error"));
     } finally {
       setLoading(false);
     }
@@ -53,7 +54,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       await demoLogin(role);
       onClose();
     } catch (err: any) {
-      setError(err.message || "Demo login failed");
+      setError(formatUserAuthError(err, "Demo login failed"));
     } finally {
       setLoading(false);
     }
@@ -66,7 +67,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       await loginWithGoogle();
       onClose();
     } catch (err: any) {
-      setError(err.message || "Google sign-in failed");
+      setError(formatUserAuthError(err, "Google sign-in failed"));
     } finally {
       setLoading(false);
     }

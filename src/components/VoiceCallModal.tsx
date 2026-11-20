@@ -114,6 +114,11 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       .catch((err) => {
         if (!cancelled) {
           console.warn("Could not fetch voice call config:", err);
+          setErrorMsg(
+            err instanceof Error
+              ? err.message
+              : "Could not load voice call configuration from server."
+          );
         }
       })
       .finally(() => {

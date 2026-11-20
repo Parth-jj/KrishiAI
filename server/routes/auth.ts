@@ -8,14 +8,33 @@ export const authRouter = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "farmer_advisory_jwt_secret_key_2026";
 
 function getFirebaseApiKey(): string | null {
-  try {
-    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-    if (!fs.existsSync(configPath)) return null;
-    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    return raw?.apiKey || null;
-  } catch {
-    return null;
+  const envKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+  if (envKey && envKey.trim()) {
+    return envKey.trim();
   }
+
+  const candidates = [
+    path.join(process.cwd(), "firebase-applet-config.json"),
+    path.resolve(process.cwd(), "firebase-applet-config.json"),
+  ];
+  if (typeof __dirname !== "undefined") {
+    candidates.push(
+      path.resolve(__dirname, "../firebase-applet-config.json"),
+      path.resolve(__dirname, "../../firebase-applet-config.json")
+    );
+  }
+
+  for (const configPath of candidates) {
+    try {
+      if (fs.existsSync(configPath)) {
+        const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        if (raw?.apiKey) return String(raw.apiKey);
+      }
+    } catch {
+      // Try next candidate path
+    }
+  }
+  return null;
 }
 
 // Helper to generate JWT token

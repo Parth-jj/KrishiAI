@@ -7,6 +7,13 @@ import {
   saveUserPhoneToFirestore,
 } from "../services/firestoreService.js";
 import { User, Farm } from "../types/index.js";
+import {
+  formatUserAuthError,
+  parseApiJson,
+  safeStorageGet,
+  safeStorageRemove,
+  safeStorageSet,
+} from "../utils/errorHelpers.js";
 
 interface AuthContextType {
   user: User | null;
@@ -30,7 +37,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [farm, setFarm] = useState<Farm | null>(null);
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem("agri_auth_token"));
+  const [token, setToken] = useState<string | null>(() => safeStorageGet("agri_auth_token"));
   const [isFirebaseAuth, setIsFirebaseAuth] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const firebaseInitializedRef = useRef<boolean>(false);
@@ -43,9 +50,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ idToken, phone }),
       });
       if (res.ok) {
-        const data = await res.json();
-        setToken(data.token);
-        localStorage.setItem("agri_auth_token", data.token);
+        const data = await parseApiJson<{ token?: string }>(res, "Failed to sync session");
+        if (data.token) {
+          setToken(data.token);
+          safeStorageSet("agri_auth_token", data.token);
+        }
       }
     } catch (err) {
       console.warn("Could not exchange Firebase session token:", err);
@@ -58,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       firebaseInitializedRef.current = true;
       if (fbUser) {
         try {
-          const prefLang = localStorage.getItem("agri_pref_lang") || "en";
+          const prefLang = safeStorageGet("agri_pref_lang") || "en";
           const [{ user: fsUser, farm: fsFarm }, idToken] = await Promise.all([
             ensureFirebaseUserDocuments(fbUser, prefLang),
             fbUser.getIdToken(),
@@ -77,25 +86,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Not signed in with Firebase — check existing Express JWT session
       setIsFirebaseAuth(false);
-      const storedToken = localStorage.getItem("agri_auth_token");
+      const storedToken = safeStorageGet("agri_auth_token");
       if (storedToken) {
         try {
           const res = await fetch("/api/auth/me", {
             headers: { Authorization: `Bearer ${storedToken}` }
           });
           if (res.ok) {
-            const data = await res.json();
+            const data = await parseApiJson<{ user: User; farm: Farm | null }>(res, "Session verification failed");
             setUser(data.user);
             setFarm(data.farm);
             setToken(storedToken);
           } else {
-            localStorage.removeItem("agri_auth_token");
+            safeStorageRemove("agri_auth_token");
             setUser(null);
             setFarm(null);
             setToken(null);
           }
         } catch {
-          localStorage.removeItem("agri_auth_token");
+          safeStorageRemove("agri_auth_token");
           setUser(null);
           setFarm(null);
           setToken(null);
@@ -112,75 +121,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const loginWithGoogle = async () => {
-    const result = await signInWithPopup(firebaseAuth, googleProvider);
-    const fbUser = result.user;
-    const prefLang = localStorage.getItem("agri_pref_lang") || "en";
-    const [{ user: fsUser, farm: fsFarm }, idToken] = await Promise.all([
-      ensureFirebaseUserDocuments(fbUser, prefLang),
-      fbUser.getIdToken(),
-    ]);
-    setUser(fsUser);
-    setFarm(fsFarm);
-    setIsFirebaseAuth(true);
-    await syncFirebaseSessionWithBackend(idToken, fsUser.phone);
+    try {
+      const result = await signInWithPopup(firebaseAuth, googleProvider);
+      const fbUser = result.user;
+      const prefLang = safeStorageGet("agri_pref_lang") || "en";
+      const [{ user: fsUser, farm: fsFarm }, idToken] = await Promise.all([
+        ensureFirebaseUserDocuments(fbUser, prefLang),
+        fbUser.getIdToken(),
+      ]);
+      setUser(fsUser);
+      setFarm(fsFarm);
+      setIsFirebaseAuth(true);
+      await syncFirebaseSessionWithBackend(idToken, fsUser.phone);
+    } catch (err) {
+      throw new Error(formatUserAuthError(err, "Google sign-in failed. Please try again."));
+    }
   };
 
   const login = async (email: string, password: string) => {
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), password })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || "Login failed");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password })
+      });
+      const data = await parseApiJson<{ error?: string; user: User; farm: Farm | null; token: string }>(
+        res,
+        "Login failed"
+      );
+      if (!res.ok) {
+        throw new Error(data.error || "Login failed");
+      }
+      setIsFirebaseAuth(false);
+      setUser(data.user);
+      setFarm(data.farm);
+      setToken(data.token);
+      safeStorageSet("agri_auth_token", data.token);
+    } catch (err) {
+      throw new Error(formatUserAuthError(err, "Login failed"));
     }
-    setIsFirebaseAuth(false);
-    setUser(data.user);
-    setFarm(data.farm);
-    setToken(data.token);
-    localStorage.setItem("agri_auth_token", data.token);
   };
 
   const demoLogin = async (role: 'farmer' | 'admin') => {
-    if (firebaseAuth.currentUser) {
-      await signOut(firebaseAuth).catch(() => {});
+    try {
+      if (firebaseAuth.currentUser) {
+        await signOut(firebaseAuth).catch(() => {});
+      }
+      const res = await fetch("/api/auth/demo-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role })
+      });
+      const data = await parseApiJson<{ error?: string; user: User; farm: Farm | null; token: string }>(
+        res,
+        "Demo login failed"
+      );
+      if (!res.ok) {
+        throw new Error(data.error || "Demo login failed");
+      }
+      setIsFirebaseAuth(false);
+      setUser(data.user);
+      setFarm(data.farm);
+      setToken(data.token);
+      safeStorageSet("agri_auth_token", data.token);
+    } catch (err) {
+      throw new Error(formatUserAuthError(err, "Demo login failed"));
     }
-    const res = await fetch("/api/auth/demo-login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || "Demo login failed");
-    }
-    setIsFirebaseAuth(false);
-    setUser(data.user);
-    setFarm(data.farm);
-    setToken(data.token);
-    localStorage.setItem("agri_auth_token", data.token);
   };
 
   const register = async (regData: { name: string; email: string; password: string; phone?: string; role?: string; farm?: Partial<Farm> }) => {
-    const res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...regData,
-        email: regData.email.trim(),
-        name: regData.name.trim()
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || "Registration failed");
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...regData,
+          email: regData.email.trim(),
+          name: regData.name.trim()
+        })
+      });
+      const data = await parseApiJson<{ error?: string; user: User; farm: Farm | null; token: string }>(
+        res,
+        "Registration failed"
+      );
+      if (!res.ok) {
+        throw new Error(data.error || "Registration failed");
+      }
+      setIsFirebaseAuth(false);
+      setUser(data.user);
+      setFarm(data.farm);
+      setToken(data.token);
+      safeStorageSet("agri_auth_token", data.token);
+    } catch (err) {
+      throw new Error(formatUserAuthError(err, "Registration failed"));
     }
-    setIsFirebaseAuth(false);
-    setUser(data.user);
-    setFarm(data.farm);
-    setToken(data.token);
-    localStorage.setItem("agri_auth_token", data.token);
   };
 
   const updateFarm = async (farmData: Partial<Farm>) => {
@@ -209,7 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       },
       body: JSON.stringify(farmData)
     });
-    const data = await res.json();
+    const data = await parseApiJson<{ error?: string; farm: Farm }>(res, "Failed to update farm");
     if (!res.ok) {
       throw new Error(data.error || "Failed to update farm");
     }
@@ -231,7 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ phone: cleaned })
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+        const data = await parseApiJson<{ error?: string }>(res, "Failed to update mobile number").catch(() => ({ error: undefined }));
         throw new Error(data.error || "Failed to update mobile number");
       }
     }
@@ -240,7 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUserData = async () => {
     if (isFirebaseAuth && firebaseAuth.currentUser) {
-      const prefLang = localStorage.getItem("agri_pref_lang") || "en";
+      const prefLang = safeStorageGet("agri_pref_lang") || "en";
       const { user: fsUser, farm: fsFarm } = await ensureFirebaseUserDocuments(
         firebaseAuth.currentUser,
         prefLang
@@ -256,7 +290,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await parseApiJson<{ user: User; farm: Farm | null }>(res);
         setUser(data.user);
         setFarm(data.farm);
       }
@@ -273,7 +307,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setFarm(null);
     setToken(null);
-    localStorage.removeItem("agri_auth_token");
+    safeStorageRemove("agri_auth_token");
   };
 
   return (

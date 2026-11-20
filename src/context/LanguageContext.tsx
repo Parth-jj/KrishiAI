@@ -485,17 +485,19 @@ const translations: Record<LanguageCode, Record<string, string>> = {
   }
 };
 
+import { safeStorageGet, safeStorageSet } from "../utils/errorHelpers.js";
+
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<LanguageCode>(() => {
-    const saved = localStorage.getItem("agri_pref_lang");
+    const saved = safeStorageGet("agri_pref_lang");
     return (saved === "te" || saved === "hi" || saved === "en") ? saved : "en";
   });
 
   const setLanguage = (lang: LanguageCode) => {
     setLanguageState(lang);
-    localStorage.setItem("agri_pref_lang", lang);
+    safeStorageSet("agri_pref_lang", lang);
   };
 
   const t = (key: string): string => {

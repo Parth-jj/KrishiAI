@@ -8,12 +8,13 @@ import {
   VoiceCallConfigStatus,
   VoiceCallRecord
 } from "../types/index.js";
+import { parseApiJson, safeStorageGet } from "../utils/errorHelpers.js";
 
 function getHeaders(token?: string | null): HeadersInit {
   const headers: HeadersInit = {
     "Content-Type": "application/json"
   };
-  const activeToken = token || localStorage.getItem("agri_auth_token");
+  const activeToken = token || safeStorageGet("agri_auth_token");
   if (activeToken) {
     headers["Authorization"] = `Bearer ${activeToken}`;
   }
@@ -28,7 +29,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify({ question, selectedCrop, language })
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to process question");
     if (!res.ok) throw new Error(result.error || "Failed to process question");
     return result;
   },
@@ -37,7 +38,7 @@ export const api = {
     const res = await fetch("/api/queries", {
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to fetch queries");
     if (!res.ok) throw new Error(result.error || "Failed to fetch queries");
     return result.queries || [];
   },
@@ -48,7 +49,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify({ advisory, targetLanguage })
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to translate advisory");
     if (!res.ok) throw new Error(result.error || "Failed to translate advisory");
     return result.advisory;
   },
@@ -59,7 +60,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify({ queryId, isUseful, comment, rating })
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to submit feedback");
     if (!res.ok) throw new Error(result.error || "Failed to submit feedback");
   },
 
@@ -80,7 +81,7 @@ export const api = {
     }
 
     const res = await fetch(`/api/weather?${params.toString()}`);
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to fetch weather data");
     if (!res.ok) throw new Error(result.error || "Failed to fetch weather data");
     return result;
   },
@@ -88,7 +89,7 @@ export const api = {
   async searchLocations(query: string): Promise<Array<{ name: string; district: string; state: string; country: string; latitude: number; longitude: number }>> {
     if (!query || query.trim().length < 2) return [];
     const res = await fetch(`/api/weather/search?q=${encodeURIComponent(query.trim())}`);
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to search locations");
     if (!res.ok) return [];
     return result.results || [];
   },
@@ -98,7 +99,7 @@ export const api = {
     const res = await fetch("/api/admin/statistics", {
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to fetch admin stats");
     if (!res.ok) throw new Error(result.error || "Failed to fetch admin stats");
     return result;
   },
@@ -107,7 +108,7 @@ export const api = {
     const res = await fetch("/api/admin/documents", {
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to fetch documents");
     if (!res.ok) throw new Error(result.error || "Failed to fetch documents");
     return result.documents || [];
   },
@@ -118,7 +119,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(doc)
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to ingest document");
     if (!res.ok) throw new Error(result.error || "Failed to ingest document");
     return result;
   },
@@ -128,7 +129,7 @@ export const api = {
       method: "DELETE",
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to delete document");
     if (!res.ok) throw new Error(result.error || "Failed to delete document");
   },
 
@@ -137,7 +138,7 @@ export const api = {
       method: "POST",
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to reindex knowledge base");
     if (!res.ok) throw new Error(result.error || "Failed to reindex knowledge base");
     return result.message;
   },
@@ -151,7 +152,7 @@ export const api = {
     const res = await fetch(`/api/admin/queries?${params.toString()}`, {
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to fetch admin queries");
     if (!res.ok) throw new Error(result.error || "Failed to fetch admin queries");
     return result.queries || [];
   },
@@ -159,7 +160,7 @@ export const api = {
   // Evaluation operations
   async getEvaluationDataset(): Promise<EvaluationItem[]> {
     const res = await fetch("/api/evaluation/dataset");
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to fetch evaluation dataset");
     if (!res.ok) throw new Error(result.error || "Failed to fetch evaluation dataset");
     return result.dataset || [];
   },
@@ -169,7 +170,7 @@ export const api = {
       method: "POST",
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to run evaluation");
     if (!res.ok) throw new Error(result.error || "Failed to run evaluation");
     return result.result;
   },
@@ -177,7 +178,7 @@ export const api = {
   // Sarvam AI Voice Call operations
   async getVoiceCallConfig(): Promise<VoiceCallConfigStatus> {
     const res = await fetch("/api/voice-calls/config");
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to load voice call configuration");
     if (!res.ok) throw new Error(result.error || "Failed to load voice call configuration");
     return result;
   },
@@ -193,7 +194,7 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(payload)
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to initiate AI voice call");
     if (!res.ok) {
       const err: any = new Error(result.error || "Failed to initiate AI voice call");
       err.code = result.code;
@@ -210,7 +211,7 @@ export const api = {
     const headers: Record<string, string> = { ...(getHeaders() as Record<string, string>) };
     if (callToken) headers["X-Call-Token"] = callToken;
     const res = await fetch(`/api/voice-calls/${encodeURIComponent(callId)}/status`, { headers });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to fetch voice call status");
     if (!res.ok) throw new Error(result.error || "Failed to fetch voice call status");
     return result.call;
   },
@@ -227,7 +228,7 @@ export const api = {
       headers,
       body: JSON.stringify({ language })
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to switch call language");
     if (!res.ok) throw new Error(result.error || "Failed to switch call language");
     return result.call;
   },
@@ -239,7 +240,7 @@ export const api = {
       method: "POST",
       headers
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to end voice call");
     if (!res.ok) throw new Error(result.error || "Failed to end voice call");
     return { call: result.call, providerNote: result.providerNote };
   },
@@ -248,7 +249,7 @@ export const api = {
     const res = await fetch("/api/voice-calls/history", {
       headers: getHeaders()
     });
-    const result = await res.json();
+    const result = await parseApiJson(res, "Failed to load call history");
     if (!res.ok) throw new Error(result.error || "Failed to load call history");
     return result.calls || [];
   }
