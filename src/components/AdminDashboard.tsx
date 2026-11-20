@@ -130,11 +130,8 @@ export const AdminDashboard: React.FC = () => {
   const handleInspectChunks = async (doc: KnowledgeDocument) => {
     setInspectingDoc(doc);
     try {
-      const res = await fetch(`/api/admin/documents/${doc.id}/chunks`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("agri_auth_token")}` }
-      });
-      const data = await res.json();
-      setInspectingChunks(data.chunks || []);
+      const chunks = await api.getDocumentChunks(doc.id);
+      setInspectingChunks(chunks);
     } catch (err) {
       console.warn(err);
     }

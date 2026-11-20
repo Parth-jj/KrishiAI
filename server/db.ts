@@ -713,6 +713,19 @@ class InMemoryDatabase {
     return record;
   }
 
+  upsertUserRecord(userData: Omit<UserRecord, 'createdAt'> & { createdAt?: string }): UserRecord {
+    const existing = this.users.get(userData.id);
+    if (existing) return existing;
+    const record: UserRecord = {
+      ...userData,
+      email: userData.email.trim().toLowerCase(),
+      createdAt: userData.createdAt || new Date().toISOString()
+    };
+    this.users.set(record.id, record);
+    this.saveToDisk();
+    return record;
+  }
+
   updateUser(id: string, updates: Partial<UserRecord>): UserRecord | undefined {
     const user = this.users.get(id);
     if (!user) return undefined;

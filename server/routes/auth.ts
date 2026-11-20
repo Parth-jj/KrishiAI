@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import jwt from "jsonwebtoken";
 import { db, hashPassword, verifyPassword, UserRecord } from "../db.js";
+import firebaseConfig from "../../firebase-applet-config.json" with { type: "json" };
 
 export const authRouter = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "farmer_advisory_jwt_secret_key_2026";
@@ -11,6 +12,10 @@ function getFirebaseApiKey(): string | null {
   const envKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
   if (envKey && envKey.trim()) {
     return envKey.trim();
+  }
+
+  if (firebaseConfig?.apiKey) {
+    return String(firebaseConfig.apiKey);
   }
 
   const candidates = [
@@ -37,6 +42,70 @@ function getFirebaseApiKey(): string | null {
   return null;
 }
 
+interface VerifiedFirebaseIdentity {
+  localId: string;
+  email: string;
+  displayName?: string;
+  phoneNumber?: string;
+}
+
+async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFirebaseIdentity | null> {
+  const apiKey = getFirebaseApiKey();
+  if (!apiKey || !idToken) return null;
+
+  try {
+    const verifyRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      }
+    );
+    if (!verifyRes.ok) return null;
+
+    const verifyData = (await verifyRes.json()) as {
+      users?: Array<{ localId: string; email?: string; displayName?: string; phoneNumber?: string }>;
+    };
+    const fbUser = verifyData.users?.[0];
+    if (!fbUser || !fbUser.email) return null;
+
+    return {
+      localId: fbUser.localId,
+      email: fbUser.email.trim().toLowerCase(),
+      displayName: fbUser.displayName,
+      phoneNumber: fbUser.phoneNumber,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getOrCreateUserFromFirebaseIdentity(
+  identity: VerifiedFirebaseIdentity,
+  phoneOverride?: string
+): UserRecord {
+  const resolvedPhone =
+    typeof phoneOverride === "string" && phoneOverride.trim()
+      ? phoneOverride.trim()
+      : identity.phoneNumber || "";
+
+  let user = db.getUserByEmail(identity.email);
+  if (!user) {
+    user = db.createUser({
+      name: identity.displayName || identity.email.split("@")[0] || "Farmer",
+      email: identity.email,
+      phone: resolvedPhone,
+      passwordHash: hashPassword(`fb_${identity.localId}_${Date.now()}`),
+      role: "farmer",
+      preferredLanguage: "en",
+    });
+  } else if (resolvedPhone && user.phone !== resolvedPhone) {
+    user = db.updateUser(user.id, { phone: resolvedPhone }) || user;
+  }
+  return user;
+}
+
 // Helper to generate JWT token
 export function generateToken(user: UserRecord): string {
   return jwt.sign(
@@ -52,25 +121,60 @@ export function generateToken(user: UserRecord): string {
   );
 }
 
-// Authentication Middleware
-export function authenticateUser(req: Request, res: Response, next: express.NextFunction) {
+// Authentication Middleware (supports Express JWTs across stateless serverless instances + Firebase ID tokens)
+export async function authenticateUser(req: Request, res: Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const bearerToken =
+    authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const fbHeaderToken =
+    typeof req.headers["x-firebase-id-token"] === "string"
+      ? req.headers["x-firebase-id-token"].trim()
+      : "";
+
+  const rawToken =
+    bearerToken && bearerToken !== "null" && bearerToken !== "undefined"
+      ? bearerToken
+      : fbHeaderToken;
+
+  if (!rawToken) {
     return res.status(401).json({ error: "Unauthorized: Missing authentication token" });
   }
 
-  const token = authHeader.split(" ")[1];
+  // 1. Try Express backend JWT verification
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    const user = db.getUserById(decoded.id);
-    if (!user) {
-      return res.status(401).json({ error: "User no longer exists" });
+    const decoded = jwt.verify(rawToken, JWT_SECRET) as any;
+    let user = decoded?.id ? db.getUserById(decoded.id) : undefined;
+    if (!user && decoded?.email) {
+      user = db.getUserByEmail(decoded.email);
     }
-    (req as any).user = user;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    if (!user && decoded?.id && decoded?.email) {
+      // Stateless serverless instance hydration from cryptographically verified JWT claims
+      user = db.upsertUserRecord({
+        id: String(decoded.id),
+        name: String(decoded.name || decoded.email.split("@")[0] || "Farmer"),
+        email: String(decoded.email).trim().toLowerCase(),
+        passwordHash: "",
+        role: decoded.role === "admin" ? "admin" : "farmer",
+        preferredLanguage: String(decoded.preferredLanguage || "en"),
+      });
+    }
+    if (user) {
+      (req as any).user = user;
+      return next();
+    }
+  } catch {
+    // Fall through to Firebase ID token verification
   }
+
+  // 2. Fallback: verify Firebase ID token directly (protects Google Sign-In users even if session exchange raced/missed)
+  const fbIdentity = await verifyFirebaseIdToken(rawToken);
+  if (fbIdentity) {
+    const user = getOrCreateUserFromFirebaseIdentity(fbIdentity);
+    (req as any).user = user;
+    return next();
+  }
+
+  return res.status(401).json({ error: "Invalid or expired authentication token. Please sign in again." });
 }
 
 // Register
@@ -214,7 +318,7 @@ authRouter.put("/me", authenticateUser, (req: Request, res: Response) => {
 // Exchange a verified Firebase ID Token for a backend API session JWT
 authRouter.post("/firebase-session", async (req: Request, res: Response) => {
   try {
-    const { idToken, phone } = req.body;
+    const { idToken, phone, farm: clientFarm } = req.body;
     if (!idToken || typeof idToken !== "string") {
       return res.status(400).json({ error: "Firebase idToken is required" });
     }
@@ -224,49 +328,28 @@ authRouter.post("/firebase-session", async (req: Request, res: Response) => {
       return res.status(500).json({ error: "Firebase configuration missing on server" });
     }
 
-    const verifyRes = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken }),
-      }
-    );
-
-    if (!verifyRes.ok) {
+    const fbIdentity = await verifyFirebaseIdToken(idToken);
+    if (!fbIdentity) {
       return res.status(401).json({ error: "Invalid Firebase session token" });
     }
 
-    const verifyData = (await verifyRes.json()) as {
-      users?: Array<{ localId: string; email?: string; displayName?: string; phoneNumber?: string }>;
-    };
-    const fbUser = verifyData.users?.[0];
-    if (!fbUser || !fbUser.email) {
-      return res.status(401).json({ error: "Firebase user not found" });
-    }
-
-    const resolvedPhone =
-      typeof phone === "string" && phone.trim()
-        ? phone.trim()
-        : fbUser.phoneNumber || "";
-
-    const normalizedEmail = fbUser.email.trim().toLowerCase();
-    let user = db.getUserByEmail(normalizedEmail);
-    if (!user) {
-      user = db.createUser({
-        name: fbUser.displayName || normalizedEmail.split("@")[0] || "Farmer",
-        email: normalizedEmail,
-        phone: resolvedPhone,
-        passwordHash: hashPassword(`fb_${fbUser.localId}_${Date.now()}`),
-        role: "farmer",
-        preferredLanguage: "en",
+    const user = getOrCreateUserFromFirebaseIdentity(fbIdentity, phone);
+    let farm = db.getFarmByUserId(user.id);
+    if (!farm && clientFarm && typeof clientFarm === "object") {
+      farm = db.saveFarm({
+        userId: user.id,
+        state: clientFarm.state || "Andhra Pradesh",
+        district: clientFarm.district || "Guntur",
+        village: clientFarm.village || "",
+        farmSizeAcres: Number(clientFarm.farmSizeAcres) || 2.5,
+        crop: clientFarm.crop || "Cotton",
+        sowingDate: clientFarm.sowingDate || "",
+        soilType: clientFarm.soilType || "Black Cotton Soil",
+        irrigationSource: clientFarm.irrigationSource || "Canal / Borewell",
       });
-    } else if (resolvedPhone && user.phone !== resolvedPhone) {
-      user = db.updateUser(user.id, { phone: resolvedPhone }) || user;
     }
 
     const token = generateToken(user);
-    const farm = db.getFarmByUserId(user.id);
     const { passwordHash: _, ...safeUser } = user;
 
     return res.json({

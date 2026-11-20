@@ -1,3 +1,4 @@
+import { firebaseAuth } from "../firebase.js";
 import {
   QueryRecord,
   WeatherData,
@@ -8,25 +9,78 @@ import {
   VoiceCallConfigStatus,
   VoiceCallRecord
 } from "../types/index.js";
-import { parseApiJson, safeStorageGet } from "../utils/errorHelpers.js";
+import { parseApiJson, safeStorageGet, safeStorageSet } from "../utils/errorHelpers.js";
 
-function getHeaders(token?: string | null): HeadersInit {
-  const headers: HeadersInit = {
+let inMemoryAuthToken: string | null = null;
+
+export function setApiAuthToken(token: string | null) {
+  inMemoryAuthToken = token;
+}
+
+async function getHeaders(tokenOverride?: string | null): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json"
   };
-  const activeToken = token || safeStorageGet("agri_auth_token");
-  if (activeToken) {
+
+  let activeToken = tokenOverride || inMemoryAuthToken || safeStorageGet("agri_auth_token");
+  if (!activeToken && firebaseAuth.currentUser) {
+    try {
+      activeToken = await firebaseAuth.currentUser.getIdToken();
+    } catch {
+      // Ignore Firebase token lookup error
+    }
+  }
+
+  if (activeToken && activeToken !== "null" && activeToken !== "undefined") {
     headers["Authorization"] = `Bearer ${activeToken}`;
   }
   return headers;
 }
 
+async function authorizedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const extraHeaders = (init.headers as Record<string, string> | undefined) || {};
+  const headers = { ...(await getHeaders()), ...extraHeaders };
+  let res = await fetch(url, { ...init, headers });
+
+  if (res.status === 401 && firebaseAuth.currentUser) {
+    try {
+      const freshIdToken = await firebaseAuth.currentUser.getIdToken(true);
+      let nextToken = freshIdToken;
+
+      const syncRes = await fetch("/api/auth/firebase-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken: freshIdToken }),
+      }).catch(() => null);
+
+      if (syncRes && syncRes.ok) {
+        const syncData = await parseApiJson<{ token?: string }>(syncRes).catch(() => ({ token: undefined }));
+        if (syncData?.token) {
+          nextToken = syncData.token;
+          setApiAuthToken(nextToken);
+          safeStorageSet("agri_auth_token", nextToken);
+        }
+      }
+
+      const retryHeaders = {
+        ...(await getHeaders(nextToken)),
+        ...extraHeaders,
+        Authorization: `Bearer ${nextToken}`,
+      };
+      res = await fetch(url, { ...init, headers: retryHeaders });
+    } catch {
+      // Return original 401 response if refresh fails
+    }
+  }
+
+  return res;
+}
+
 export const api = {
   // Query operations
   async askQuery(question: string, selectedCrop?: string, language?: string): Promise<{ data: QueryRecord; pipelineExecution: any }> {
-    const res = await fetch("/api/queries", {
+    const res = await authorizedFetch("/api/queries", {
       method: "POST",
-      headers: getHeaders(),
       body: JSON.stringify({ question, selectedCrop, language })
     });
     const result = await parseApiJson(res, "Failed to process question");
@@ -35,18 +89,15 @@ export const api = {
   },
 
   async getQueries(): Promise<QueryRecord[]> {
-    const res = await fetch("/api/queries", {
-      headers: getHeaders()
-    });
+    const res = await authorizedFetch("/api/queries");
     const result = await parseApiJson(res, "Failed to fetch queries");
     if (!res.ok) throw new Error(result.error || "Failed to fetch queries");
     return result.queries || [];
   },
 
   async translateAdvisory(advisory: any, targetLanguage: string): Promise<any> {
-    const res = await fetch("/api/queries/translate", {
+    const res = await authorizedFetch("/api/queries/translate", {
       method: "POST",
-      headers: getHeaders(),
       body: JSON.stringify({ advisory, targetLanguage })
     });
     const result = await parseApiJson(res, "Failed to translate advisory");
@@ -55,9 +106,8 @@ export const api = {
   },
 
   async submitFeedback(queryId: string, isUseful: boolean, comment?: string, rating?: number): Promise<void> {
-    const res = await fetch("/api/queries/feedback", {
+    const res = await authorizedFetch("/api/queries/feedback", {
       method: "POST",
-      headers: getHeaders(),
       body: JSON.stringify({ queryId, isUseful, comment, rating })
     });
     const result = await parseApiJson(res, "Failed to submit feedback");
@@ -96,27 +146,29 @@ export const api = {
 
   // Admin operations
   async getAdminStats(): Promise<AdminStats> {
-    const res = await fetch("/api/admin/statistics", {
-      headers: getHeaders()
-    });
+    const res = await authorizedFetch("/api/admin/statistics");
     const result = await parseApiJson(res, "Failed to fetch admin stats");
     if (!res.ok) throw new Error(result.error || "Failed to fetch admin stats");
     return result;
   },
 
   async getDocuments(): Promise<KnowledgeDocument[]> {
-    const res = await fetch("/api/admin/documents", {
-      headers: getHeaders()
-    });
+    const res = await authorizedFetch("/api/admin/documents");
     const result = await parseApiJson(res, "Failed to fetch documents");
     if (!res.ok) throw new Error(result.error || "Failed to fetch documents");
     return result.documents || [];
   },
 
+  async getDocumentChunks(docId: string): Promise<any[]> {
+    const res = await authorizedFetch(`/api/admin/documents/${encodeURIComponent(docId)}/chunks`);
+    const result = await parseApiJson(res, "Failed to fetch document chunks");
+    if (!res.ok) throw new Error(result.error || "Failed to fetch document chunks");
+    return result.chunks || [];
+  },
+
   async ingestDocument(doc: Partial<KnowledgeDocument>): Promise<{ document: KnowledgeDocument; chunksCreated: number }> {
-    const res = await fetch("/api/admin/documents", {
+    const res = await authorizedFetch("/api/admin/documents", {
       method: "POST",
-      headers: getHeaders(),
       body: JSON.stringify(doc)
     });
     const result = await parseApiJson(res, "Failed to ingest document");
@@ -125,18 +177,16 @@ export const api = {
   },
 
   async deleteDocument(id: string): Promise<void> {
-    const res = await fetch(`/api/admin/documents/${id}`, {
-      method: "DELETE",
-      headers: getHeaders()
+    const res = await authorizedFetch(`/api/admin/documents/${encodeURIComponent(id)}`, {
+      method: "DELETE"
     });
     const result = await parseApiJson(res, "Failed to delete document");
     if (!res.ok) throw new Error(result.error || "Failed to delete document");
   },
 
   async reindexKnowledgeBase(): Promise<string> {
-    const res = await fetch("/api/admin/reindex", {
-      method: "POST",
-      headers: getHeaders()
+    const res = await authorizedFetch("/api/admin/reindex", {
+      method: "POST"
     });
     const result = await parseApiJson(res, "Failed to reindex knowledge base");
     if (!res.ok) throw new Error(result.error || "Failed to reindex knowledge base");
@@ -149,9 +199,7 @@ export const api = {
     if (filter?.crop) params.append("crop", filter.crop);
     if (filter?.hasFeedback) params.append("hasFeedback", filter.hasFeedback);
 
-    const res = await fetch(`/api/admin/queries?${params.toString()}`, {
-      headers: getHeaders()
-    });
+    const res = await authorizedFetch(`/api/admin/queries?${params.toString()}`);
     const result = await parseApiJson(res, "Failed to fetch admin queries");
     if (!res.ok) throw new Error(result.error || "Failed to fetch admin queries");
     return result.queries || [];
@@ -166,9 +214,8 @@ export const api = {
   },
 
   async runEvaluationBenchmark(): Promise<EvaluationRunResult> {
-    const res = await fetch("/api/evaluation/run", {
-      method: "POST",
-      headers: getHeaders()
+    const res = await authorizedFetch("/api/evaluation/run", {
+      method: "POST"
     });
     const result = await parseApiJson(res, "Failed to run evaluation");
     if (!res.ok) throw new Error(result.error || "Failed to run evaluation");
@@ -189,9 +236,8 @@ export const api = {
     callConsent: boolean;
     transcriptConsent: boolean;
   }): Promise<{ callToken: string; call: VoiceCallRecord }> {
-    const res = await fetch("/api/voice-calls/outbound", {
+    const res = await authorizedFetch("/api/voice-calls/outbound", {
       method: "POST",
-      headers: getHeaders(),
       body: JSON.stringify(payload)
     });
     const result = await parseApiJson(res, "Failed to initiate AI voice call");
@@ -208,9 +254,9 @@ export const api = {
   },
 
   async getVoiceCallStatus(callId: string, callToken?: string | null): Promise<VoiceCallRecord> {
-    const headers: Record<string, string> = { ...(getHeaders() as Record<string, string>) };
+    const headers: Record<string, string> = {};
     if (callToken) headers["X-Call-Token"] = callToken;
-    const res = await fetch(`/api/voice-calls/${encodeURIComponent(callId)}/status`, { headers });
+    const res = await authorizedFetch(`/api/voice-calls/${encodeURIComponent(callId)}/status`, { headers });
     const result = await parseApiJson(res, "Failed to fetch voice call status");
     if (!res.ok) throw new Error(result.error || "Failed to fetch voice call status");
     return result.call;
@@ -221,9 +267,9 @@ export const api = {
     language: string,
     callToken?: string | null
   ): Promise<VoiceCallRecord> {
-    const headers: Record<string, string> = { ...(getHeaders() as Record<string, string>) };
+    const headers: Record<string, string> = {};
     if (callToken) headers["X-Call-Token"] = callToken;
-    const res = await fetch(`/api/voice-calls/${encodeURIComponent(callId)}/language`, {
+    const res = await authorizedFetch(`/api/voice-calls/${encodeURIComponent(callId)}/language`, {
       method: "POST",
       headers,
       body: JSON.stringify({ language })
@@ -234,9 +280,9 @@ export const api = {
   },
 
   async endVoiceCall(callId: string, callToken?: string | null): Promise<{ call: VoiceCallRecord; providerNote?: string }> {
-    const headers: Record<string, string> = { ...(getHeaders() as Record<string, string>) };
+    const headers: Record<string, string> = {};
     if (callToken) headers["X-Call-Token"] = callToken;
-    const res = await fetch(`/api/voice-calls/${encodeURIComponent(callId)}/end`, {
+    const res = await authorizedFetch(`/api/voice-calls/${encodeURIComponent(callId)}/end`, {
       method: "POST",
       headers
     });
@@ -246,9 +292,7 @@ export const api = {
   },
 
   async getVoiceCallHistory(): Promise<VoiceCallRecord[]> {
-    const res = await fetch("/api/voice-calls/history", {
-      headers: getHeaders()
-    });
+    const res = await authorizedFetch("/api/voice-calls/history");
     const result = await parseApiJson(res, "Failed to load call history");
     if (!res.ok) throw new Error(result.error || "Failed to load call history");
     return result.calls || [];
